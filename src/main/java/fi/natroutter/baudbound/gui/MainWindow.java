@@ -1,6 +1,7 @@
 package fi.natroutter.baudbound.gui;
 
 import fi.natroutter.baudbound.enums.ConnectionStatus;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.serial.SerialHandler;
 
 import fi.natroutter.baudbound.BaudBound;
@@ -55,7 +56,7 @@ public class MainWindow {
             // spacing + button(20) + spacing + text_line + spacing
             float bottomReserve = itemSpacing * 4 + 20 + lineHeight;
 
-            DialogHelper.listAndEditorButtons(
+            GuiHelper.listAndEditorButtons(
                     "##events", events, selectedEvent, true, bottomReserve,
                     ()-> {
                         BaudBound.getEventEditorDialog().show();

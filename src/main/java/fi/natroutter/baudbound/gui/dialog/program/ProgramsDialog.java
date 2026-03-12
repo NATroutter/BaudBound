@@ -2,6 +2,7 @@ package fi.natroutter.baudbound.gui.dialog.program;
 
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.DialogMode;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
@@ -58,7 +59,7 @@ public class ProgramsDialog {
 
         if (ImGui.beginPopupModal("Programs", modalOpen, ImGuiWindowFlags.AlwaysAutoResize)) {
 
-            DialogHelper.listAndEditorButtons(
+            GuiHelper.listAndEditorButtons(
                     "##Programs", items, selected, true,
                     //Create Callback
                     ()-> {

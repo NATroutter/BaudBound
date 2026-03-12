@@ -2,6 +2,7 @@ package fi.natroutter.baudbound.gui.dialog.webhook;
 
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.DialogMode;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
@@ -58,7 +59,7 @@ public class WebhooksDialog {
 
         if (ImGui.beginPopupModal("Webhooks", modalOpen, ImGuiWindowFlags.AlwaysAutoResize)) {
 
-            DialogHelper.listAndEditorButtons(
+            GuiHelper.listAndEditorButtons(
                     "##webhooks", items, selected, true,
                     //Create Callback
                     ()-> {
