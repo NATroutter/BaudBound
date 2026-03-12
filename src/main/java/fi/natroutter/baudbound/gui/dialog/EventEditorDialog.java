@@ -2,11 +2,11 @@ package fi.natroutter.baudbound.gui.dialog;
 
 import fi.natroutter.foxlib.logger.FoxLogger;
 import fi.natroutter.baudbound.BaudBound;
-import fi.natroutter.baudbound.gui.dialog.components.ConditionType;
+import fi.natroutter.baudbound.enums.ConditionType;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
-import fi.natroutter.baudbound.gui.dialog.components.DialogMode;
-import fi.natroutter.baudbound.gui.dialog.components.ActionType;
-import fi.natroutter.baudbound.gui.helpers.GuiHelper;
+import fi.natroutter.baudbound.enums.DialogMode;
+import fi.natroutter.baudbound.enums.ActionType;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
@@ -17,6 +17,7 @@ import imgui.type.ImInt;
 import imgui.type.ImString;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 
@@ -25,20 +26,19 @@ public class EventEditorDialog {
     private FoxLogger logger = BaudBound.getLogger();
     private StorageProvider storage = BaudBound.getStorageProvider();
 
-
-    private final ImString fieldName = new ImString();
+    // Conditions
     private final List<ImString[]> fieldConditions = new ArrayList<>();
     private final List<ImInt> fieldConditionKeys = new ArrayList<>();
-    private final ImInt fieldActionType = new ImInt(0);
-    private final ImInt fieldActionWebhook = new ImInt(0);
-    private final ImString fieldActionOpenUrl = new ImString();
-    private final ImString fieldActionOpenProgramPath = new ImString();
-    private final ImString fieldActionOpenProgramArgs = new ImString();
-    private final ImString fieldActionTypeText = new ImString();
 
+    // Actions
+    private final List<ImInt> fieldActionTypes = new ArrayList<>();
+    private final List<ImInt> fieldActionComboValues = new ArrayList<>();
+    private final List<ImString> fieldActionTextValues = new ArrayList<>();
 
+    private final ImString fieldName = new ImString();
 
     private String[] webhookNames = {};
+    private String[] programNames = {};
 
     private DialogMode mode = DialogMode.CREATE;
     private boolean open = false;
@@ -53,16 +53,21 @@ public class EventEditorDialog {
         this.open = true;
         this.mode = dialogMode;
 
-        List<DataStore.Actions.Webhook> webhooks = storage.getData().getActions().getWebhooks();
-        webhookNames = webhooks.stream().map(DataStore.Actions.Webhook::getName).toArray(String[]::new);
+        webhookNames = storage.getData().getActions().getWebhooks().stream()
+                .map(DataStore.Actions.Webhook::getName).toArray(String[]::new);
+        programNames = storage.getData().getActions().getPrograms().stream()
+                .map(DataStore.Actions.Program::getName).toArray(String[]::new);
+
+        fieldConditions.clear();
+        fieldConditionKeys.clear();
+        fieldActionTypes.clear();
+        fieldActionComboValues.clear();
+        fieldActionTextValues.clear();
 
         if (dialogMode == DialogMode.EDIT && event != null) {
             this.editing = event;
             fieldName.set(event.getName());
-            fieldActionType.set(ActionType.findIndex(event.getType()));
 
-            fieldConditions.clear();
-            fieldConditionKeys.clear();
             if (event.getConditions() != null) {
                 for (DataStore.Event.Condition c : event.getConditions()) {
                     ImString val = new ImString(256);
@@ -72,29 +77,41 @@ public class EventEditorDialog {
                 }
             }
 
-            fieldActionWebhook.set(0);
-            for (int i = 0; i < webhookNames.length; i++) {
-                if (webhookNames[i].equals(event.getActionWebhook())) {
-                    fieldActionWebhook.set(i);
-                    break;
+            if (event.getActions() != null) {
+                for (DataStore.Event.Action a : event.getActions()) {
+                    ActionType aType = ActionType.getByName(a.getType());
+                    if (aType == null) aType = ActionType.values()[0];
+                    fieldActionTypes.add(new ImInt(aType.ordinal()));
+
+                    ImInt comboVal = new ImInt(0);
+                    ImString textVal = new ImString(512);
+
+                    switch (aType) {
+                        case CALL_WEBHOOK -> {
+                            for (int i = 0; i < webhookNames.length; i++) {
+                                if (webhookNames[i].equals(a.getValue())) { comboVal.set(i); break; }
+                            }
+                        }
+                        case OPEN_PROGRAM -> {
+                            for (int i = 0; i < programNames.length; i++) {
+                                if (programNames[i].equals(a.getValue())) { comboVal.set(i); break; }
+                            }
+                        }
+                        case OPEN_URL, TYPE_TEXT -> textVal.set(a.getValue() != null ? a.getValue() : "");
+                    }
+
+                    fieldActionComboValues.add(comboVal);
+                    fieldActionTextValues.add(textVal);
                 }
             }
-            fieldActionOpenUrl.set(event.getActionOpenUrl() != null ? event.getActionOpenUrl() : "");
-            fieldActionOpenProgramPath.set(event.getActionOpenProgramPath() != null ? event.getActionOpenProgramPath() : "");
-            fieldActionOpenProgramArgs.set(event.getActionOpenProgramArgs() != null ? event.getActionOpenProgramArgs() : "");
-            fieldActionTypeText.set(event.getActionTypeText() != null ? event.getActionTypeText() : "");
         } else {
             this.editing = null;
             fieldName.set("");
-            fieldActionType.set(0);
-            fieldConditions.clear();
-            fieldConditionKeys.clear();
-            fieldActionWebhook.set(0);
-            fieldActionOpenUrl.set("");
-            fieldActionOpenProgramPath.set("");
-            fieldActionOpenProgramArgs.set("");
-            fieldActionTypeText.set("");
         }
+    }
+
+    private void reopen() {
+        this.open = true;
     }
 
     public void render() {
@@ -114,13 +131,11 @@ public class EventEditorDialog {
         );
         ImGui.setNextWindowSizeConstraints(ImGui.getIO().getDisplaySizeX() * 0.9f, 0, ImGui.getIO().getDisplaySizeX() * 0.9f, Float.MAX_VALUE);
 
-
         boolean wasOpen = ImGui.isPopupOpen(popupTitle);
         if (ImGui.beginPopupModal(popupTitle, modalOpen, ImGuiWindowFlags.AlwaysAutoResize)) {
 
             ImGui.text("Name");
             GuiHelper.toolTip("This is the name of the event. it will be displayed in the event list.");
-
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
             ImGui.beginDisabled(mode == DialogMode.EDIT);
             ImGui.inputText("##name", fieldName);
@@ -130,44 +145,12 @@ public class EventEditorDialog {
             ImGui.separator();
             ImGui.spacing();
 
+            // --- Conditions ---
             ImGui.text("Conditions");
-            GuiHelper.toolTip("This are the conditions that must be met for the event to trigger.");
+            GuiHelper.toolTip("Conditions that must be met for the event to trigger.");
 
-            int removeIndex = -1;
-            ImGui.pushStyleVar(ImGuiStyleVar.CellPadding, 4, 6);
-            if (ImGui.beginTable("##conditions", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame)) {
-                ImGui.tableSetupColumn("Condition", imgui.flag.ImGuiTableColumnFlags.WidthStretch);
-                ImGui.tableSetupColumn("Value", imgui.flag.ImGuiTableColumnFlags.WidthStretch);
-                ImGui.tableSetupColumn("##remove", imgui.flag.ImGuiTableColumnFlags.WidthFixed, 22);
-                ImGui.tableHeadersRow();
-
-                for (int row = 0; row < fieldConditions.size(); row++) {
-                    ImString[] pair = fieldConditions.get(row);
-                    ImGui.tableNextRow();
-
-                    ImGui.tableSetColumnIndex(0);
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.combo("##hk" + row, fieldConditionKeys.get(row), ConditionType.asFriendlyArray());
-
-                    ImGui.tableSetColumnIndex(1);
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputText("##hv" + row, pair[1]);
-
-                    ImGui.tableSetColumnIndex(2);
-                    ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
-                    if (ImGui.button("X##hr" + row, 0, 0)) {
-                        removeIndex = row;
-                    }
-                    ImGui.popStyleColor();
-                }
-                ImGui.endTable();
-            }
-
-            ImGui.popStyleVar();
-            if (removeIndex >= 0) {
-                fieldConditions.remove(removeIndex);
-                fieldConditionKeys.remove(removeIndex);
-            }
+            GuiHelper.keyValueTable("##conditions", "Condition", "Value",
+                    fieldConditions, ConditionType.asFriendlyArray(), fieldConditionKeys);
 
             ImGui.spacing();
             if (ImGui.button("Add Condition", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
@@ -179,67 +162,28 @@ public class EventEditorDialog {
             ImGui.separator();
             ImGui.spacing();
 
-            ActionType value = ActionType.values()[fieldActionType.get()];
+            // --- Actions ---
+            ImGui.text("Actions");
+            GuiHelper.toolTip("Actions performed when all conditions are met.");
 
-            switch (value) {
-                case OPEN_URL -> {
-                    GuiHelper.instructions("\"Url to open\"");
-                }
-                case TYPE_TEXT -> {
-                    GuiHelper.instructions("\"Text to type\"");
-                }
-                case OPEN_PROGRAM -> {
-                    GuiHelper.instructions("\"Program Path\", \"Program Arguments\"");
-                }
+            boolean hasTextAction = fieldActionTypes.stream().anyMatch(t -> {
+                ActionType at = ActionType.values()[t.get()];
+                return at == ActionType.OPEN_URL || at == ActionType.TYPE_TEXT;
+            });
+            if (hasTextAction) {
+                ImGui.spacing();
+                GuiHelper.instructions("the value fields");
+                ImGui.spacing();
             }
 
-            ImGui.text("Action Type");
-            GuiHelper.toolTip("This is the action that will be performed when the all conditions are met.");
-            ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-            if (ImGui.combo("##actiontype", fieldActionType, ActionType.asFriendlyArray())) {
-                fieldActionWebhook.set(0);
-                fieldActionOpenUrl.set("");
-                fieldActionOpenProgramPath.set("");
-                fieldActionOpenProgramArgs.set("");
-                fieldActionTypeText.set("");
+            renderActionsTable();
+
+            ImGui.spacing();
+            if (ImGui.button("Add Action", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
+                fieldActionTypes.add(new ImInt(0));
+                fieldActionComboValues.add(new ImInt(0));
+                fieldActionTextValues.add(new ImString(512));
             }
-
-            switch (value) {
-                case CALL_WEBHOOK ->  {
-                    ImGui.text("Webhook");
-                    GuiHelper.toolTip("This is the webhook that will be called. Webhooks can be created in the webhooks editor you can access it from the menu bars actions tab");
-                    if (webhookNames.length > 0) {
-                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                        ImGui.combo("##Webhook", fieldActionWebhook, webhookNames);
-                    } else {
-                        ImGui.text("No webhooks available.");
-                    }
-                }
-                case OPEN_URL -> {
-                    ImGui.text("Url to open");
-                    GuiHelper.toolTip("This is the url that will be opened in the default browser.");
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputText("##openurl", fieldActionOpenUrl);
-                }
-                case OPEN_PROGRAM -> {
-                    ImGui.text("Program Path");
-                    GuiHelper.toolTip("This is the path to the program that will be opened.");
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputText("##runprogrampath", fieldActionOpenProgramPath);
-
-                    ImGui.text("Program Aruments");
-                    GuiHelper.toolTip("This is the arguments that will be passed to the program.");
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputText("##runprogramargs", fieldActionOpenProgramArgs);
-                }
-                case TYPE_TEXT -> {
-                    ImGui.text("Text to type");
-                    GuiHelper.toolTip("This is the text that will be typed by the program using keyboard input emulation.");
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputTextMultiline("##texttotype", fieldActionTypeText, ImGuiInputTextFlags.AllowTabInput);
-                }
-            }
-
 
             // Buttons
             ImGui.spacing();
@@ -255,16 +199,102 @@ public class EventEditorDialog {
         }
     }
 
+    private void renderActionsTable() {
+        int removeIndex = -1;
+        int moveUpIndex = -1;
+        int moveDownIndex = -1;
+
+        ImGui.pushStyleVar(ImGuiStyleVar.CellPadding, 4, 6);
+        if (ImGui.beginTable("##actions_table", 5,
+                ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame)) {
+
+            ImGui.tableSetupColumn("Type",  ImGuiTableColumnFlags.WidthStretch);
+            ImGui.tableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.tableSetupColumn("##up",  ImGuiTableColumnFlags.WidthFixed, 22);
+            ImGui.tableSetupColumn("##dn",  ImGuiTableColumnFlags.WidthFixed, 22);
+            ImGui.tableSetupColumn("##rm",  ImGuiTableColumnFlags.WidthFixed, 22);
+            ImGui.tableHeadersRow();
+
+            for (int i = 0; i < fieldActionTypes.size(); i++) {
+                ImGui.tableNextRow();
+
+                ImGui.tableSetColumnIndex(0);
+                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                int prevType = fieldActionTypes.get(i).get();
+                if (ImGui.combo("##atype" + i, fieldActionTypes.get(i), ActionType.asFriendlyArray())) {
+                    if (fieldActionTypes.get(i).get() != prevType) {
+                        fieldActionComboValues.get(i).set(0);
+                        fieldActionTextValues.get(i).set("");
+                    }
+                }
+
+                ActionType aType = ActionType.values()[fieldActionTypes.get(i).get()];
+
+                ImGui.tableSetColumnIndex(1);
+                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                switch (aType) {
+                    case CALL_WEBHOOK -> {
+                        if (webhookNames.length > 0) {
+                            ImGui.combo("##awh" + i, fieldActionComboValues.get(i), webhookNames);
+                        } else {
+                            ImGui.textDisabled("No webhooks");
+                        }
+                    }
+                    case OPEN_PROGRAM -> {
+                        if (programNames.length > 0) {
+                            ImGui.combo("##aprog" + i, fieldActionComboValues.get(i), programNames);
+                        } else {
+                            ImGui.textDisabled("No programs");
+                        }
+                    }
+                    case OPEN_URL  -> ImGui.inputText("##aurl" + i, fieldActionTextValues.get(i));
+                    case TYPE_TEXT -> ImGui.inputText("##atext" + i, fieldActionTextValues.get(i));
+                }
+
+                ImGui.tableSetColumnIndex(2);
+                ImGui.beginDisabled(i == 0);
+                if (ImGui.button("^##au" + i)) moveUpIndex = i;
+                ImGui.endDisabled();
+
+                ImGui.tableSetColumnIndex(3);
+                ImGui.beginDisabled(i == fieldActionTypes.size() - 1);
+                if (ImGui.button("v##ad" + i)) moveDownIndex = i;
+                ImGui.endDisabled();
+
+                ImGui.tableSetColumnIndex(4);
+                ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
+                if (ImGui.button("X##ar" + i)) removeIndex = i;
+                ImGui.popStyleColor();
+            }
+
+            ImGui.endTable();
+        }
+        ImGui.popStyleVar();
+
+        int size = fieldActionTypes.size();
+        if (removeIndex >= 0) {
+            fieldActionTypes.remove(removeIndex);
+            fieldActionComboValues.remove(removeIndex);
+            fieldActionTextValues.remove(removeIndex);
+        }
+        if (moveUpIndex > 0) {
+            Collections.swap(fieldActionTypes, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldActionComboValues, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldActionTextValues, moveUpIndex, moveUpIndex - 1);
+        }
+        if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
+            Collections.swap(fieldActionTypes, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldActionComboValues, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldActionTextValues, moveDownIndex, moveDownIndex + 1);
+        }
+    }
+
     private void save() {
         String name = fieldName.get().trim();
         if (name.isEmpty()) {
-            BaudBound.getMessageDialog().show("Error", "Name is required.", new DialogButton("OK", this::show));
+            BaudBound.getMessageDialog().show("Error", "Name is required.", new DialogButton("OK", this::reopen));
             return;
         }
-
-        List<DataStore.Event> events = storage.getData().getEvents();
-        String type = ActionType.values()[fieldActionType.get()].name();
-        ActionType actionType = ActionType.values()[fieldActionType.get()];
 
         List<DataStore.Event.Condition> conditions = new ArrayList<>();
         for (int i = 0; i < fieldConditions.size(); i++) {
@@ -273,37 +303,31 @@ public class EventEditorDialog {
             conditions.add(new DataStore.Event.Condition(condType, condValue));
         }
 
-        String actionWebhook = null;
-        String actionOpenUrl = null;
-        String actionOpenProgramPath = null;
-        String actionOpenProgramArgs = null;
-        String actionTypeText = null;
-
-        switch (actionType) {
-            case CALL_WEBHOOK -> actionWebhook = webhookNames.length > 0 ? webhookNames[fieldActionWebhook.get()] : null;
-            case OPEN_URL -> actionOpenUrl = fieldActionOpenUrl.get().trim();
-            case OPEN_PROGRAM -> {
-                actionOpenProgramPath = fieldActionOpenProgramPath.get().trim();
-                actionOpenProgramArgs = fieldActionOpenProgramArgs.get().trim();
+        List<DataStore.Event.Action> actions = new ArrayList<>();
+        for (int i = 0; i < fieldActionTypes.size(); i++) {
+            ActionType aType = ActionType.values()[fieldActionTypes.get(i).get()];
+            String value = switch (aType) {
+                case CALL_WEBHOOK -> webhookNames.length > 0 ? webhookNames[fieldActionComboValues.get(i).get()] : null;
+                case OPEN_PROGRAM -> programNames.length > 0 ? programNames[fieldActionComboValues.get(i).get()] : null;
+                case OPEN_URL, TYPE_TEXT -> fieldActionTextValues.get(i).get().trim();
+            };
+            if (value != null && !value.isBlank()) {
+                actions.add(new DataStore.Event.Action(aType.name(), value));
             }
-            case TYPE_TEXT -> actionTypeText = fieldActionTypeText.get().trim();
         }
 
+        List<DataStore.Event> events = storage.getData().getEvents();
+
         if (mode == DialogMode.EDIT && editing != null) {
-            editing.setType(type);
             editing.setConditions(conditions);
-            editing.setActionWebhook(actionWebhook);
-            editing.setActionOpenUrl(actionOpenUrl);
-            editing.setActionOpenProgramPath(actionOpenProgramPath);
-            editing.setActionOpenProgramArgs(actionOpenProgramArgs);
-            editing.setActionTypeText(actionTypeText);
+            editing.setActions(actions);
         } else {
             boolean nameExists = events.stream().anyMatch(e -> e.getName().equalsIgnoreCase(name));
             if (nameExists) {
-                BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::show));
+                BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::reopen));
                 return;
             }
-            events.add(new DataStore.Event(name, type, conditions, actionWebhook, actionOpenUrl, actionOpenProgramPath, actionOpenProgramArgs, actionTypeText));
+            events.add(new DataStore.Event(name, conditions, actions));
         }
 
         storage.save();

@@ -1,19 +1,20 @@
-package fi.natroutter.baudbound.gui.dialog.actions;
+package fi.natroutter.baudbound.gui.dialog.webhook;
 
 import fi.natroutter.foxlib.logger.FoxLogger;
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
-import fi.natroutter.baudbound.gui.dialog.components.DialogMode;
-import fi.natroutter.baudbound.gui.helpers.GuiHelper;
-import fi.natroutter.baudbound.http.data.Method;
+import fi.natroutter.baudbound.enums.DialogMode;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
+import fi.natroutter.baudbound.http.HttpHandler;
+import fi.natroutter.baudbound.enums.HttpMethod;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
 import imgui.ImVec2;
 import imgui.flag.*;
+import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 import imgui.type.ImString;
-import imgui.type.ImBoolean;
 
 import java.util.*;
 
@@ -28,10 +29,16 @@ public class WebhookEditorDialog {
     private final List<ImString[]> fieldHeaders = new ArrayList<>();
     private final ImString fieldBody = new ImString();
 
+    private volatile boolean testing = false;
+
     private DialogMode mode = DialogMode.CREATE;
     private boolean open = false;
     private final ImBoolean modalOpen = new ImBoolean(false);
     private DataStore.Actions.Webhook editing = null;
+
+    private void reopen() {
+        this.open = true;
+    }
 
     public void show() {
         show(DialogMode.CREATE, null);
@@ -47,7 +54,7 @@ public class WebhookEditorDialog {
             fieldUrl.set(webhook.getUrl());
 
             // Find method index by name
-            fieldMethod.set(Method.findIndex(webhook.getName()));
+            fieldMethod.set(HttpMethod.findIndex(webhook.getMethod()));
 
             fieldHeaders.clear();
             if (webhook.getHeaders() != null) {
@@ -96,9 +103,7 @@ public class WebhookEditorDialog {
 
             ImGui.text("Name");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-            ImGui.beginDisabled(mode == DialogMode.EDIT);
             ImGui.inputText("##name", fieldName);
-            ImGui.endDisabled();
 
             ImGui.text("URL");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
@@ -106,40 +111,12 @@ public class WebhookEditorDialog {
 
             ImGui.text("Method");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-            ImGui.combo("##method", fieldMethod, Method.asArray());
+            ImGui.combo("##method", fieldMethod, HttpMethod.asArray());
 
             ImGui.text("Headers");
-            int removeIndex = -1;
-            ImGui.pushStyleVar(ImGuiStyleVar.CellPadding, 4, 6);
-            if (ImGui.beginTable("##headers", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame)) {
-                ImGui.tableSetupColumn("Key", imgui.flag.ImGuiTableColumnFlags.WidthStretch);
-                ImGui.tableSetupColumn("Value", imgui.flag.ImGuiTableColumnFlags.WidthStretch);
-                ImGui.tableSetupColumn("##remove", imgui.flag.ImGuiTableColumnFlags.WidthFixed, 22);
-                ImGui.tableHeadersRow();
+            GuiHelper.keyValueTable("##headers", "Key", "Value", fieldHeaders);
 
-                for (int row = 0; row < fieldHeaders.size(); row++) {
-                    ImString[] pair = fieldHeaders.get(row);
-                    ImGui.tableNextRow();
 
-                    ImGui.tableSetColumnIndex(0);
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputText("##hk" + row, pair[0]);
-
-                    ImGui.tableSetColumnIndex(1);
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputText("##hv" + row, pair[1]);
-
-                    ImGui.tableSetColumnIndex(2);
-                    ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
-                    if (ImGui.button("X##hr" + row, 0, 0)) {
-                        removeIndex = row;
-                    }
-                    ImGui.popStyleColor();
-                }
-                ImGui.endTable();
-            }
-            ImGui.popStyleVar();
-            if (removeIndex >= 0) fieldHeaders.remove(removeIndex);
             ImGui.spacing();
             if (ImGui.button("Add Header", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
                 fieldHeaders.add(new ImString[]{new ImString(128), new ImString(256)});
@@ -152,11 +129,18 @@ public class WebhookEditorDialog {
                     ImGuiInputTextFlags.AllowTabInput
             );
 
-
             // Buttons
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
+
+            float buttonWidth = (ImGui.getContentRegionAvailX() - ImGui.getStyle().getItemSpacingX()) / 2;
+            ImGui.beginDisabled(testing);
+            if (ImGui.button(testing ? "Testing..." : "Test Webhook", new ImVec2(buttonWidth, 20))) {
+                testWebhook();
+            }
+            ImGui.endDisabled();
+            ImGui.sameLine();
             if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), 20))) {
                 save();
             }
@@ -168,13 +152,53 @@ public class WebhookEditorDialog {
         }
     }
 
+    private void testWebhook() {
+        String url = fieldUrl.get().trim();
+        if (url.isEmpty()) {
+            BaudBound.getMessageDialog().show("Error", "URL is required to test the webhook.", new DialogButton("OK", this::reopen));
+            return;
+        }
+
+        List<DataStore.Actions.Webhook.Header> headers = new ArrayList<>();
+        for (ImString[] pair : fieldHeaders) {
+            String key = pair[0].get().trim();
+            String value = pair[1].get().trim();
+            if (!key.isEmpty()) headers.add(new DataStore.Actions.Webhook.Header(key, value));
+        }
+
+        String method = HttpMethod.values()[fieldMethod.get()].name();
+        String body = fieldBody.get().trim();
+        DataStore.Actions.Webhook tempWebhook = new DataStore.Actions.Webhook(
+                fieldName.get().trim(), url, method, headers, body.isEmpty() ? null : body
+        );
+
+        testing = true;
+        Thread.ofVirtual().start(() -> {
+            HttpHandler.WebhookResult result = HttpHandler.fireWebhook(tempWebhook);
+            testing = false;
+            if (result.success()) {
+                BaudBound.getMessageDialog().show("Test Successful",
+                        "Status: " + result.statusCode() + "\n\n" + (result.body() != null ? result.body() : ""),
+                        new DialogButton("OK", this::reopen));
+            } else if (result.error() != null) {
+                BaudBound.getMessageDialog().show("Test Failed",
+                        "Error: " + result.error(),
+                        new DialogButton("OK", this::reopen));
+            } else {
+                BaudBound.getMessageDialog().show("Test Failed",
+                        "Status: " + result.statusCode() + "\n\n" + (result.body() != null ? result.body() : ""),
+                        new DialogButton("OK", this::reopen));
+            }
+        });
+    }
+
     private void save() {
         logger.info("Saving webhook...");
 
         String name = fieldName.get().trim();
         String url = fieldUrl.get().trim();
         if (name.isEmpty() || url.isEmpty()) {
-            BaudBound.getMessageDialog().show("Error", "Name and URL are required.", new DialogButton("OK", this::show));
+            BaudBound.getMessageDialog().show("Error", "Name and URL are required.", new DialogButton("OK", this::reopen));
             return;
         }
 
@@ -184,7 +208,7 @@ public class WebhookEditorDialog {
             BaudBound.getMessageDialog().show(
                     "Error",
                     "A webhook with the name \"" + name + "\" already exists.",
-                    new DialogButton("OK", this::show)
+                    new DialogButton("OK", this::reopen)
             );
             return;
         }
@@ -196,7 +220,7 @@ public class WebhookEditorDialog {
             if (!key.isEmpty()) headers.add(new DataStore.Actions.Webhook.Header(key, value));
         }
 
-        String method = Method.values()[fieldMethod.get()].name();
+        String method = HttpMethod.values()[fieldMethod.get()].name();
         String body = fieldBody.get().trim();
 
         if (mode == DialogMode.EDIT && editing != null) {

@@ -1,4 +1,4 @@
-package fi.natroutter.baudbound.gui.dialog.general;
+package fi.natroutter.baudbound.gui.dialog;
 
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
 import imgui.ImGui;

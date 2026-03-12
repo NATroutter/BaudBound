@@ -1,4 +1,4 @@
-package fi.natroutter.baudbound.serial.data;
+package fi.natroutter.baudbound.enums;
 
 import com.fazecast.jSerialComm.SerialPort;
 import lombok.AllArgsConstructor;

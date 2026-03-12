@@ -1,15 +1,15 @@
 package fi.natroutter.baudbound.gui.dialog;
 
 import com.fazecast.jSerialComm.SerialPort;
+import fi.natroutter.baudbound.serial.SerialHandler;
 import fi.natroutter.foxlib.logger.FoxLogger;
 import fi.natroutter.baudbound.BaudBound;
-import fi.natroutter.baudbound.gui.helpers.GuiHelper;
-import fi.natroutter.baudbound.serial.SerialHelper;
-import fi.natroutter.baudbound.serial.data.FlowControl;
-import fi.natroutter.baudbound.serial.data.Parity;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
+import fi.natroutter.baudbound.enums.FlowControl;
+import fi.natroutter.baudbound.enums.Parity;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
-import fi.natroutter.baudbound.utilities.Utils;
+import fi.natroutter.baudbound.system.StartupManager;
 import imgui.ImGui;
 import imgui.ImVec2;
 import imgui.flag.ImGuiCond;
@@ -17,6 +17,8 @@ import imgui.flag.ImGuiWindowFlags;
 import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 
@@ -24,12 +26,15 @@ public class SettingsDialog {
 
     private FoxLogger logger = BaudBound.getLogger();
     private StorageProvider storage = BaudBound.getStorageProvider();
+    private SerialHandler serialHandler = BaudBound.getSerialHandler();
 
     private final ImBoolean optionStartWithOS = new ImBoolean(false);
     private final ImBoolean optionStartHidden = new ImBoolean(false);
     private final ImBoolean optionAutoConnect = new ImBoolean(false);
 
     private final ImBoolean optionRunFirstEventOnly = new ImBoolean(false);
+    private final ImBoolean optionUseDefaultEvent = new ImBoolean(false);
+    private final ImInt optionDefaultEvent = new ImInt(0);
 
 
     private final ImInt optionDevicePort = new ImInt(0);
@@ -40,26 +45,39 @@ public class SettingsDialog {
     private final ImInt optionDeviceFlowControl = new ImInt(0);
 
     private final String[] baudRates = {"9600", "19200", "38400", "115200"};
-    private final String[] dataBits = {"5", "6", "7", "8"};
+    private final String[] dataBits = {"8", "7", "6", "5"};
     private final String[] stopBits = {"1", "2"};
-    private enum ConnectionStatus {WAITING_TEST, NO_DEVICE, CONNECTED, FAILED }
+
 
     private final boolean disablePortSelection = false;
     private List<SerialPort> devices;
     private String[] portNames;
     private boolean open = false;
     private final ImBoolean modalOpen = new ImBoolean(false);
-    private ConnectionStatus connectionStatus = ConnectionStatus.WAITING_TEST;
-    private long statusResetAt = -1;
-    private long resetInterval = 3000;
 
     public SettingsDialog() {
-        this.devices = SerialHelper.getDevices();
+        this.devices = serialHandler.getDevices();
         load();
     }
 
     public void show() {
+        validateDefaultEvent();
         this.open = true;
+    }
+
+    private void validateDefaultEvent() {
+        if (!optionUseDefaultEvent.get()) return;
+        DataStore.Settings.Event event = storage.getData().getSettings().getEvent();
+        List<DataStore.Event> events = storage.getData().getEvents();
+        String savedName = event.getDefaultEvent();
+        boolean found = savedName != null && events.stream().anyMatch(e -> e.getName().equals(savedName));
+        if (!found) {
+            optionUseDefaultEvent.set(false);
+            optionDefaultEvent.set(0);
+            event.setUseDefaultEvent(false);
+            event.setDefaultEvent(null);
+            storage.save();
+        }
     }
 
     public void render() {
@@ -67,11 +85,6 @@ public class SettingsDialog {
             ImGui.openPopup("Settings");
             modalOpen.set(true);
             open = false;
-        }
-
-        if (statusResetAt > 0 && System.currentTimeMillis() >= statusResetAt) {
-            connectionStatus = ConnectionStatus.WAITING_TEST;
-            statusResetAt = -1;
         }
 
         ImGui.setNextWindowPos(
@@ -97,21 +110,37 @@ public class SettingsDialog {
             ImGui.checkbox("Auto connect device", optionAutoConnect);
             GuiHelper.toolTip("Automatically connect to the configured serial device on startup.");
 
-            ImGui.separatorText("Action Settings");
 
-            ImGui.checkbox("Run first event only", optionRunFirstEventOnly);
+
+            ImGui.separatorText("Event Settings");
+
+            ImGui.checkbox("Run first only", optionRunFirstEventOnly);
             GuiHelper.toolTip("Enable this to trigger only the first matching event.\n" +
                     "Disable it to run all events whose conditions match the serial input.");
+
+            ImGui.spacing();
+            ImGui.checkbox("Use default event", optionUseDefaultEvent);
+
+            List<DataStore.Event> events = storage.getData().getEvents();
+
+            if (optionUseDefaultEvent.get()) {
+                ImGui.text("Default Event:");
+                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                ImGui.beginDisabled(events.isEmpty());
+                ImGui.combo("##defaultevent", optionDefaultEvent, events.stream().map(DataStore.Event::getName).toArray(String[]::new));
+                ImGui.endDisabled();
+            }
+
 
 
             ImGui.separatorText("Device Settings");
 
             if (devices != null && !devices.isEmpty()) {
-                portNames = devices.stream().map(SerialHelper::getDeviceName).toArray(String[]::new);
+                portNames = devices.stream().map(SerialPort::getDescriptivePortName).toArray(String[]::new);
             }
 
             float refreshWidth = ImGui.calcTextSize("Refresh").x + ImGui.getStyle().getFramePaddingX() * 2;
-            String longestPort = portNames != null ? Utils.getLongest(portNames) : null;
+            String longestPort = portNames != null ? getLongest(portNames) : null;
             float minComboWidth = longestPort != null ? ImGui.calcTextSize(longestPort).x + ImGui.getStyle().getFramePaddingX() * 2 + 20 : 150;
             float comboWidth = Math.max(minComboWidth, ImGui.getContentRegionAvailX() - refreshWidth - ImGui.getStyle().getItemSpacingX());
 
@@ -124,7 +153,7 @@ public class SettingsDialog {
 
             ImGui.sameLine();
             if (ImGui.button("Refresh", new ImVec2(refreshWidth, 20))) {
-                this.devices = SerialHelper.getDevices();
+                this.devices = serialHandler.getDevices();
             }
 
             ImGui.text("Baud Rate");
@@ -152,29 +181,10 @@ public class SettingsDialog {
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
             ImGui.combo("##flowcontrol", optionDeviceFlowControl, FlowControl.asArray());
 
-
-            ImGui.text("Connection:  ");
-            ImGui.sameLine();
-
-            switch (connectionStatus) {
-                case WAITING_TEST -> ImGui.textColored(1.0f, 1.0f, 0.0f, 1.0f, "Waiting For Test...");
-                case NO_DEVICE -> ImGui.textColored(1.0f, 0.549f, 0.0f, 1.0f, "Device Not Found!");
-                case CONNECTED -> ImGui.textColored(0.0f, 1.0f, 0.0f, 1.0f, "Connected successfully!");
-                case FAILED -> ImGui.textColored(1.0f, 0.0f, 0.0f, 1.0f, "Connection failed!");
-            }
-
-            ImGui.sameLine();
-            if (ImGui.button("Test", new ImVec2(ImGui.calcTextSize("Test").x + ImGui.getStyle().getItemSpacingX() * 2, 20))) {
-                connectionStatus = testConnection();
-                statusResetAt = System.currentTimeMillis() + resetInterval;
-            }
-
-
             // Buttons
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
-
 
             if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), 20))) {
                 save();
@@ -186,40 +196,38 @@ public class SettingsDialog {
         }
     }
 
-    private ConnectionStatus testConnection() {
-        if (devices == null || devices.isEmpty()) {
-            return ConnectionStatus.NO_DEVICE;
-        }
-
-        SerialPort port = devices.get(optionDevicePort.get());
-        port.setBaudRate(Integer.parseInt(baudRates[optionDeviceBaudRate.get()]));
-        port.setNumDataBits(Integer.parseInt(dataBits[optionDeviceDataBit.get()]));
-        port.setNumStopBits(Integer.parseInt(stopBits[optionDeviceStopBit.get()]));
-        port.setParity(Parity.values()[optionDeviceParity.get()].getBit());
-        port.setFlowControl(FlowControl.values()[optionDeviceFlowControl.get()].getBit());
-
-        if (port.openPort()) {
-            port.closePort();
-            return ConnectionStatus.CONNECTED;
-        } else {
-            return ConnectionStatus.FAILED;
-        }
+    public static String getLongest(String[] array) {
+        return Arrays.stream(array)
+                .max(Comparator.comparingInt(String::length))
+                .orElse(null);
     }
 
     private void load() {
-        logger.info("Loading settings...");
         DataStore.Settings settings = storage.getData().getSettings();
         DataStore.Settings.Generic generic = settings.getGeneric();
         DataStore.Settings.Event event = settings.getEvent();
         DataStore.Settings.Device device = settings.getDevice();
 
         //Load Generic Settings
-        optionStartWithOS.set(generic.isStartWithOS());
+        optionStartWithOS.set(StartupManager.isEnabled());
         optionStartHidden.set(generic.isStartHidden());
         optionAutoConnect.set(generic.isAutoConnect());
 
         //Load Event Settings
         optionRunFirstEventOnly.set(event.isRunFirstOnly());
+        optionUseDefaultEvent.set(event.isUseDefaultEvent());
+
+        List<DataStore.Event> events = storage.getData().getEvents();
+        if (event.getDefaultEvent() != null && !events.isEmpty()) {
+            for (int i = 0; i < events.size(); i++) {
+                if (events.get(i).getName().equals(event.getDefaultEvent())) {
+                    optionDefaultEvent.set(i);
+                    break;
+                }
+            }
+        }
+
+        validateDefaultEvent();
 
         //Load Device Settings
         if (devices != null && device.getPort() != null) {
@@ -279,12 +287,27 @@ public class SettingsDialog {
         DataStore.Settings.Device device = settings.getDevice();
 
         //Save Generic Settings
+        try {
+            // Always call setEnabled when checked so the JAR path is kept up to date
+            StartupManager.setEnabled(optionStartWithOS.get());
+        } catch (Exception e) {
+            logger.error("Failed to update startup registration: " + e.getMessage());
+            optionStartWithOS.set(false);
+        }
         generic.setStartWithOS(optionStartWithOS.get());
         generic.setStartHidden(optionStartHidden.get());
         generic.setAutoConnect(optionAutoConnect.get());
 
         //Save Event Settings
         event.setRunFirstOnly(optionRunFirstEventOnly.get());
+        event.setUseDefaultEvent(optionUseDefaultEvent.get());
+
+        List<DataStore.Event> events = storage.getData().getEvents();
+        if (!events.isEmpty()) {
+            event.setDefaultEvent(events.get(optionDefaultEvent.get()).getName());
+        } else {
+            event.setDefaultEvent(null);
+        }
 
 
 

@@ -6,7 +6,7 @@ import fi.natroutter.foxlib.updates.GitHubVersionChecker;
 import fi.natroutter.foxlib.updates.data.UpdateStatus;
 import fi.natroutter.foxlib.updates.data.VersionInfo;
 import fi.natroutter.baudbound.BaudBound;
-import fi.natroutter.baudbound.gui.helpers.GuiHelper;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
 import imgui.ImGui;
 import imgui.flag.ImGuiCond;
 import imgui.flag.ImGuiWindowFlags;

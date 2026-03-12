@@ -1,8 +1,7 @@
-package fi.natroutter.baudbound.gui.dialog.actions;
+package fi.natroutter.baudbound.gui.dialog.webhook;
 
 import fi.natroutter.baudbound.BaudBound;
-import fi.natroutter.baudbound.gui.dialog.components.DialogMode;
-import fi.natroutter.baudbound.gui.helpers.DialogHelper;
+import fi.natroutter.baudbound.enums.DialogMode;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
@@ -26,8 +25,8 @@ public class WebhooksDialog {
 
     private StorageProvider storage = BaudBound.getStorageProvider();
 
-    private final ImInt selectedWebhook = new ImInt(0);
-    private List<DataStore.Actions.Webhook> webhooks = storage.getData().getActions().getWebhooks();
+    private final ImInt selected = new ImInt(0);
+    private List<DataStore.Actions.Webhook> items = storage.getData().getActions().getWebhooks();
 
     private boolean open = false;
     private final ImBoolean modalOpen = new ImBoolean(false);
@@ -60,7 +59,7 @@ public class WebhooksDialog {
         if (ImGui.beginPopupModal("Webhooks", modalOpen, ImGuiWindowFlags.AlwaysAutoResize)) {
 
             DialogHelper.listAndEditorButtons(
-                    "##webhooks", webhooks, selectedWebhook, true,
+                    "##webhooks", items, selected, true,
                     //Create Callback
                     ()-> {
                         ImGui.closeCurrentPopup();
@@ -69,13 +68,21 @@ public class WebhooksDialog {
                     //Edit Callback
                     ()-> {
                         ImGui.closeCurrentPopup();
-                        BaudBound.getWebhookEditorDialog().show(DialogMode.EDIT, webhooks.get(selectedWebhook.get()));
+                        BaudBound.getWebhookEditorDialog().show(DialogMode.EDIT, items.get(selected.get()));
+                    },
+                    //Duplicate Callback
+                    ()-> {
+                        DataStore.Actions.Webhook orig = items.get(selected.get());
+                        List<DataStore.Actions.Webhook.Header> headerCopy = orig.getHeaders() == null ? new java.util.ArrayList<>() :
+                                orig.getHeaders().stream().map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), h.getValue())).toList();
+                        items.add(new DataStore.Actions.Webhook(orig.getName() + " (copy)", orig.getUrl(), orig.getMethod(), headerCopy, orig.getBody()));
+                        storage.save();
                     },
                     //Delete Callback
                     ()-> {
-                        webhooks.remove(selectedWebhook.get());
-                        if (selectedWebhook.get() >= webhooks.size()) {
-                            selectedWebhook.set(Math.max(0, webhooks.size() - 1));
+                        items.remove(selected.get());
+                        if (selected.get() >= items.size()) {
+                            selected.set(Math.max(0, items.size() - 1));
                         }
                         storage.save();
                     },

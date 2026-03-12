@@ -1,11 +1,2 @@
 {
-		"port": "COM6",
-  		"baud_rate": 9600,
-		"data_bits": 8,
-		"stop_bits": 1,
-		"parity": "NO_PARITY",
-		"flow_control": "FLOW_CONTROL_DISABLED",
-  		"start_with_os": false,
-  		"start_hidden": false,
-  		"auto_connect": false
 }

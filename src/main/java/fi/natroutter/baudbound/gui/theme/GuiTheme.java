@@ -1,4 +1,4 @@
-package fi.natroutter.baudbound.gui.helpers;
+package fi.natroutter.baudbound.gui.theme;
 
 import imgui.ImGui;
 import imgui.ImGuiStyle;

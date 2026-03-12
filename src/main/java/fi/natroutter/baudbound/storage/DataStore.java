@@ -62,6 +62,12 @@ public class DataStore {
             @SerializedName("run_first_only")
             private boolean runFirstOnly;
 
+            @SerializedName("use_default_event")
+            private boolean useDefaultEvent;
+
+            @SerializedName("default_event")
+            private String defaultEvent;
+
         }
 
         @Data
@@ -99,31 +105,29 @@ public class DataStore {
         @SerializedName("name")
         private String name;
 
-        @SerializedName("type")
-        private String type;
-
         @SerializedName("conditions")
         private List<Condition> conditions = new ArrayList<>();
 
-        @SerializedName("action_webhook")
-        private String actionWebhook;
-
-        @SerializedName("action_open_url")
-        private String actionOpenUrl;
-
-        @SerializedName("action_open_program_path")
-        private String actionOpenProgramPath;
-
-        @SerializedName("action_open_program_args")
-        private String actionOpenProgramArgs;
-
-        @SerializedName("action_type_text")
-        private String actionTypeText;
+        @SerializedName("actions")
+        private List<Action> actions = new ArrayList<>();
 
         @Data
         @NoArgsConstructor
         @AllArgsConstructor
         public static class Condition {
+
+            @SerializedName("type")
+            private String type;
+
+            @SerializedName("value")
+            private String value;
+
+        }
+
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class Action {
 
             @SerializedName("type")
             private String type;
@@ -143,9 +147,8 @@ public class DataStore {
         @SerializedName("webhooks")
         private List<Webhook> webhooks = new ArrayList<>();
 
-        @SerializedName("websites")
-        private List<Websites> websites = new ArrayList<>();
-
+        @SerializedName("programs")
+        private List<Program> programs = new ArrayList<>();
 
         @Data
         @NoArgsConstructor
@@ -179,19 +182,24 @@ public class DataStore {
                 private String value;
 
             }
-
         }
 
         @Data
         @NoArgsConstructor
         @AllArgsConstructor
-        public static class Websites implements Named {
+        public static class Program implements Named {
 
             @SerializedName("name")
             private String name;
 
-            @SerializedName("url")
-            private String url;
+            @SerializedName("path")
+            private String path;
+
+            @SerializedName("arguments")
+            private String arguments;
+
+            @SerializedName("run_as_admin")
+            private boolean runAsAdmin;
 
         }
 

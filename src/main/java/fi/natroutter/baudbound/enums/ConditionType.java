@@ -1,4 +1,4 @@
-package fi.natroutter.baudbound.gui.dialog.components;
+package fi.natroutter.baudbound.enums;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
