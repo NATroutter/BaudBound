@@ -25,11 +25,29 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineEvent;
 
+/**
+ * Processes a single line of serial input against the configured event list and fires
+ * the matching actions.
+ * <p>
+ * Each call to {@link #process} evaluates every enabled event in order, checks all of
+ * its conditions against {@code input}, and dispatches each action on a virtual thread
+ * so that slow actions (HTTP, file I/O, audio) never block the serial read loop.
+ * <p>
+ * Variable substitution ({@code {input}}, {@code {timestamp}}) is applied to action
+ * values immediately before execution via {@link #resolve}.
+ */
 public class EventHandler {
 
     private final FoxLogger logger = BaudBound.getLogger();
     private final StorageProvider storage = BaudBound.getStorageProvider();
 
+    /**
+     * Evaluates all configured events against {@code input} and fires matching actions.
+     * Respects the {@code runFirstOnly}, {@code conditionEventsFirst}, and
+     * {@code skipEmptyConditions} settings from {@link DataStore.Settings.Event}.
+     *
+     * @param input the trimmed line read from the serial port
+     */
     public void process(String input) {
 
         DataStore data = storage.getData();
@@ -60,6 +78,10 @@ public class EventHandler {
         }
     }
 
+    /**
+     * Returns {@code true} if every condition in the event is satisfied by {@code input}.
+     * An event with no conditions always matches.
+     */
     private boolean matchesConditions(DataStore.Event event, String input) {
         List<DataStore.Event.Condition> conditions = event.getConditions();
         if (conditions == null || conditions.isEmpty()) return true;
@@ -94,6 +116,10 @@ public class EventHandler {
         return true;
     }
 
+    /**
+     * Dispatches each action of the event on a separate virtual thread.
+     * Errors in individual actions are caught and logged without stopping other actions.
+     */
     private void fireAction(DataStore.Event event, String input) {
         if (event.getActions() == null || event.getActions().isEmpty()) return;
 
@@ -316,6 +342,13 @@ public class EventHandler {
 
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
+    /**
+     * Substitutes {@code {input}} and {@code {timestamp}} placeholders in {@code template}.
+     *
+     * @param template the template string; may be {@code null}
+     * @param input    the raw serial input line
+     * @return the resolved string, or {@code null} if {@code template} is {@code null}
+     */
     private String resolve(String template, String input) {
         if (template == null) return null;
         String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMAT);

@@ -20,14 +20,46 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
+/**
+ * Shared ImGui helper utilities used across all windows and dialogs.
+ * <p>
+ * Provides reusable widgets:
+ * <ul>
+ *   <li>{@link #listAndEditorButtons} — scrollable list with Create/Edit/Duplicate/Delete/reorder buttons</li>
+ *   <li>{@link #clickableLink} — underlined, hand-cursor hyperlink text</li>
+ *   <li>{@link #keyValueTable} — editable two-column key/value table with row reorder and delete</li>
+ *   <li>{@link #toolTip} — inline {@code (?)} label with a hover tooltip</li>
+ *   <li>{@link #instructions} — collapsible variable-substitution hint block</li>
+ * </ul>
+ */
 public class GuiHelper {
 
-    /** No move buttons, no reserved height. Used by WebhooksDialog and ProgramsDialog. */
+    /**
+     * Convenience overload without move buttons or reserved height.
+     * Used by list dialogs that don't need ordering controls (e.g. WebhooksDialog, ProgramsDialog).
+     */
     public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onError) {
         listAndEditorButtons(id, data, selected, fillHeight, 0f, onCreate, onEdit, onDuplicate, onDelete, ()->{}, ()->{}, onError);
     }
 
-    /** Move buttons, reserved bottom height. Full variant used by MainWindow. */
+    /**
+     * Full variant with move-up / move-down buttons and a configurable reserved height.
+     * Used by MainWindow where the event list needs ordering controls and must leave
+     * room for the Connect button and status label below.
+     *
+     * @param id             unique ImGui widget ID prefix
+     * @param data           the list to display; items must implement {@link DataStore.Named}
+     * @param selected       holds the currently selected index
+     * @param fillHeight     if {@code true} the list box stretches to fill available height
+     * @param reservedHeight additional pixels to subtract from the list height when filling
+     * @param onCreate       called when "Create" is clicked
+     * @param onEdit         called when "Edit" is clicked (only if list is non-empty)
+     * @param onDuplicate    called when "Duplicate" is clicked (only if list is non-empty)
+     * @param onDelete       called when "Delete" is clicked (only if list is non-empty)
+     * @param onMoveUp       called when "^" is clicked (disabled at top)
+     * @param onMoveDown     called when "v" is clicked (disabled at bottom)
+     * @param onError        called as the button action of the auto-shown error dialog
+     */
     public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, float reservedHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onMoveUp, Runnable onMoveDown, Runnable onError) {
         float itemSpacing = ImGui.getStyle().getItemSpacingY();
         float lineHeight = ImGui.getTextLineHeightWithSpacing();
@@ -107,6 +139,12 @@ public class GuiHelper {
         ImGui.endDisabled();
     }
 
+    /**
+     * Renders a blue underlined hyperlink that opens {@code url} in the default browser when clicked.
+     *
+     * @param label the display text
+     * @param url   the URL to open
+     */
     public static void clickableLink(String label, String url) {
         ImGui.textColored(0.3f, 0.7f, 1.0f, 1.0f, label);
         if (ImGui.isItemHovered()) {
@@ -124,12 +162,21 @@ public class GuiHelper {
         }
     }
 
+    /**
+     * Renders a disabled {@code (?)} label on the same line; hovering shows {@code content}
+     * as a tooltip.
+     */
     public static void toolTip(String content) {
         ImGui.sameLine();
         ImGui.textDisabled("(?)");
         ImGui.setItemTooltip(content);
     }
 
+    /**
+     * Renders a disabled hint block listing the supported variable substitution tokens.
+     *
+     * @param place short description of where the variables apply, e.g. {@code "the value fields"}
+     */
     public static void instructions(String place) {
         ImGui.beginDisabled();
         ImGui.text("You can use these variables in " + place + ":");
@@ -138,7 +185,16 @@ public class GuiHelper {
         ImGui.endDisabled();
     }
 
-    // Both columns are inputText
+    /**
+     * Renders an editable two-column key/value table with per-row move and delete controls.
+     * Mutations (remove, swap) are applied after the table loop to avoid modifying the list
+     * while iterating.
+     *
+     * @param id          unique ImGui widget ID prefix
+     * @param col0Header  header label for the key column
+     * @param col1Header  header label for the value column
+     * @param rows        mutable list of {@code [key, value]} ImString pairs; modified in place
+     */
     public static void keyValueTable(String id, String col0Header, String col1Header, List<ImString[]> rows) {
         int[] result = renderTable(id, col0Header, col1Header, rows,
                 row -> ImGui.inputText("##c0" + id + row, rows.get(row)[0]));

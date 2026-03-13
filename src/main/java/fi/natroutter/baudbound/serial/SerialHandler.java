@@ -14,6 +14,19 @@ import lombok.Getter;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * Manages the serial port lifecycle: connecting, reading, and disconnecting.
+ * <p>
+ * On connection a virtual-thread read loop ({@link #readLoop}) continuously polls the port,
+ * accumulates bytes into a line buffer, and dispatches complete lines to
+ * {@link EventHandler#process}. Disconnection from either end sets
+ * {@code status} to {@link ConnectionStatus#NO_DEVICE} and, when auto-connect is enabled,
+ * starts a background retry loop ({@link #startReconnectLoop}) that attempts
+ * to reconnect every 5 seconds.
+ * <p>
+ * {@code status} is {@code volatile} so that the GLFW render thread can read it safely
+ * without synchronization.
+ */
 public class SerialHandler {
 
     private final FoxLogger logger = BaudBound.getLogger();
@@ -39,6 +52,11 @@ public class SerialHandler {
         }
     }
 
+    /**
+     * Opens the configured serial port and starts the background read loop.
+     * No-op if already connected. Sets {@code status} to {@link ConnectionStatus#NO_DEVICE}
+     * or {@link ConnectionStatus#FAILED_TO_CONNECT} on failure.
+     */
     public void connect() {
         if (status == ConnectionStatus.CONNECTED) return;
 
@@ -87,6 +105,10 @@ public class SerialHandler {
         listenerThread = Thread.ofVirtual().start(this::readLoop);
     }
 
+    /**
+     * Stops the read loop, closes the port, and sets status to
+     * {@link ConnectionStatus#DISCONNECTED}. No-op if not connected.
+     */
     public void disconnect() {
         if (status != ConnectionStatus.CONNECTED) return;
 
@@ -204,6 +226,11 @@ public class SerialHandler {
         });
     }
 
+    /**
+     * Returns all serial ports currently visible to the OS.
+     *
+     * @return a list of available ports, or an empty list if none are found
+     */
     public List<SerialPort> getDevices() {
         SerialPort[] ports = SerialPort.getCommPorts();
         if (ports.length == 0) {

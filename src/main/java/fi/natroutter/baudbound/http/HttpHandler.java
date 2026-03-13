@@ -4,10 +4,31 @@ import fi.natroutter.baudbound.storage.DataStore;
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 
+/**
+ * Executes outbound HTTP requests for webhook actions using Jsoup as the HTTP client.
+ */
 public class HttpHandler {
 
+    /**
+     * Result of a webhook request attempt.
+     *
+     * @param success    {@code true} if the response status is 2xx
+     * @param statusCode the HTTP response status code, or {@code -1} on connection failure
+     * @param body       the response body, or {@code null} on failure
+     * @param error      the exception message on failure, otherwise {@code null}
+     */
     public record WebhookResult(boolean success, int statusCode, String body, String error) {}
 
+    /**
+     * Fires the given webhook synchronously and returns the result.
+     * <p>
+     * The request times out after 10 seconds. HTTP errors (4xx, 5xx) are returned as
+     * unsuccessful results rather than thrown; only network-level failures produce an error
+     * message in the result.
+     *
+     * @param webhook the fully resolved webhook definition (URLs and headers already substituted)
+     * @return a {@link WebhookResult} describing the outcome
+     */
     public static WebhookResult fireWebhook(DataStore.Actions.Webhook webhook) {
         try {
             Connection.Method method = Connection.Method.valueOf(

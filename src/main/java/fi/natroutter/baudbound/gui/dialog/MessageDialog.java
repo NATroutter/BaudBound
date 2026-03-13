@@ -10,6 +10,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * A generic modal popup for showing a title, a message, and one or more action buttons.
+ * <p>
+ * Does not extend {@link BaseDialog} because it manages its own deferred-open flag
+ * ({@code shouldOpen}) and centers itself on first appearance rather than always.
+ * Buttons close the popup automatically; an optional {@link DialogButton#action} is
+ * invoked before closing.
+ */
 public class MessageDialog {
 
     private boolean shouldOpen = false;
@@ -17,10 +25,23 @@ public class MessageDialog {
     private List<DialogButton> buttons = new ArrayList<>();
     private String popupId = "";
 
+    /**
+     * Shows the dialog with a single default "OK" button.
+     *
+     * @param title   the popup title
+     * @param message the body text (wrapped automatically)
+     */
     public void show(String title, String message) {
         show(title, message, new DialogButton("OK"));
     }
 
+    /**
+     * Shows the dialog with custom buttons.
+     *
+     * @param title   the popup title
+     * @param message the body text (wrapped automatically)
+     * @param buttons one or more buttons; each button closes the popup and optionally runs its action
+     */
     public void show(String title, String message, DialogButton... buttons) {
         this.message = message;
         this.buttons = Arrays.asList(buttons);

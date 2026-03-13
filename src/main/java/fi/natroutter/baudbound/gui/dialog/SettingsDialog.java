@@ -25,6 +25,14 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 
+/**
+ * Modal settings dialog covering General, Event, and Device configuration sections,
+ * plus the Utilities shortcut-creator.
+ * <p>
+ * ImGui state fields (prefixed {@code option}) shadow the persisted settings and are
+ * populated by {@link #load()} when the dialog opens. {@link #save()} writes them back
+ * to {@link DataStore} and persists to disk.
+ */
 public class SettingsDialog extends BaseDialog {
 
     private final FoxLogger logger = BaudBound.getLogger();
@@ -158,6 +166,13 @@ public class SettingsDialog extends BaseDialog {
         }
     }
 
+    /**
+     * Opens a Swing {@link javax.swing.JFileChooser} on a virtual thread (to avoid blocking
+     * the GLFW main thread) and creates the shortcut in the selected folder.
+     * <p>
+     * An invisible always-on-top {@link javax.swing.JFrame} is used as the parent so the
+     * chooser appears in front of the GLFW window.
+     */
     private void openShortcutDialog() {
         creatingShortcut = true;
         Thread.ofVirtual().start(() -> {
@@ -201,6 +216,7 @@ public class SettingsDialog extends BaseDialog {
         });
     }
 
+    /** Copies current {@link DataStore} values into the ImGui state fields. */
     private void load() {
         DataStore.Settings settings = storage.getData().getSettings();
         DataStore.Settings.Generic generic = settings.getGeneric();
@@ -231,6 +247,7 @@ public class SettingsDialog extends BaseDialog {
         optionDeviceFlowControl.set(findEnumIndex(FlowControl.values(), device.getFlowControl()));
     }
 
+    /** Writes the current ImGui state fields back to {@link DataStore} and persists to disk. */
     private void save() {
         logger.info("Saving settings...");
         DataStore.Settings settings = storage.getData().getSettings();

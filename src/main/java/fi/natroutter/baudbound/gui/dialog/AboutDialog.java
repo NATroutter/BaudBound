@@ -11,6 +11,15 @@ import imgui.ImGui;
 import java.io.IOException;
 
 
+/**
+ * Modal dialog showing application version, update status, developer info, feature list,
+ * and system information.
+ * <p>
+ * On {@link #show()}, an asynchronous GitHub release check is triggered via
+ * {@link #checkForUpdates()}. The result is displayed once available without blocking
+ * the render loop. If an update is available, release notes (capped at 10 lines) and a
+ * "Download Update" button are shown at the bottom.
+ */
 public class AboutDialog extends BaseDialog {
 
     private static final String AUTHOR = "NATroutter";
@@ -24,12 +33,18 @@ public class AboutDialog extends BaseDialog {
     private boolean checkingForUpdates = false;
     private String updateStatus = "Checking for updates...";
 
+    /** Triggers an update check (if not already running) and opens the dialog. */
     @Override
     public void show() {
         checkForUpdates();
         requestOpen();
     }
 
+    /**
+     * Initiates an asynchronous GitHub release check. No-op if a check is already in
+     * progress or a result has already been received. The result is stored in
+     * {@code versionInfo} and consumed by {@link #render()} on the next frame.
+     */
     private void checkForUpdates() {
         if (!checkingForUpdates && versionInfo == null) {
             checkingForUpdates = true;

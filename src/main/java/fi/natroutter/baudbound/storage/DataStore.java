@@ -10,6 +10,19 @@ import lombok.NoArgsConstructor;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Root JSON model for all persisted application state.
+ * <p>
+ * The object graph mirrors the {@code storage.json} structure exactly:
+ * <ul>
+ *   <li>{@link Settings} — generic, event-processing, and device configuration</li>
+ *   <li>{@link Actions} — saved webhook and program definitions</li>
+ *   <li>events list — ordered list of named {@link Event} entries</li>
+ * </ul>
+ * Serialization is handled by {@link #fromJson} / {@link #toJson}; all field names
+ * are mapped via {@code @SerializedName} so that renaming Java fields won't break
+ * existing config files.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -124,6 +137,7 @@ public class DataStore {
 
         }
 
+        /** Returns a fully independent deep copy of this event (no shared list or condition/action references). */
         public Event deepCopy() {
             List<Condition> conditionsCopy = conditions == null ? new ArrayList<>() :
                     conditions.stream().map(c -> new Condition(c.getType(), c.getValue(), c.isCaseSensitive())).toList();
@@ -178,6 +192,7 @@ public class DataStore {
             @SerializedName("body")
             private String body;
 
+            /** Returns a fully independent deep copy of this webhook (headers list is not shared). */
             public Webhook deepCopy() {
                 List<Header> headersCopy = headers == null ? new ArrayList<>() :
                         headers.stream().map(h -> new Header(h.getKey(), h.getValue())).toList();
@@ -203,6 +218,7 @@ public class DataStore {
         @AllArgsConstructor
         public static class Program implements Named {
 
+            /** Returns a fully independent deep copy of this program entry. */
             public Program deepCopy() {
                 return new Program(name, path, arguments, runAsAdmin);
             }
@@ -224,6 +240,7 @@ public class DataStore {
 
     }
 
+    /** Marker interface for list items that have a display name (used by {@code GuiHelper}). */
     public interface Named {
         String getName();
     }
@@ -231,10 +248,19 @@ public class DataStore {
     private static final Gson GSON = new Gson();
     private static final Gson GSON_PRETTY = new GsonBuilder().setPrettyPrinting().create();
 
+    /**
+     * Deserializes a {@code DataStore} from the given JSON string.
+     *
+     * @param json the JSON content to parse
+     * @return the populated {@code DataStore} instance
+     */
     public static DataStore fromJson(String json) {
         return GSON.fromJson(json, DataStore.class);
     }
 
+    /**
+     * Serializes this instance to a pretty-printed JSON string suitable for writing to disk.
+     */
     public String toJson() {
         return GSON_PRETTY.toJson(this);
     }

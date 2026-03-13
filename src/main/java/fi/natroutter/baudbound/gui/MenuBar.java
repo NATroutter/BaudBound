@@ -8,6 +8,13 @@ import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import imgui.ImGui;
 
+/**
+ * Renders the ImGui menu bar embedded in the main window.
+ * <p>
+ * Menu items delegate directly to the relevant singleton dialog's {@code show()} method.
+ * Must be called between {@code ImGui.begin} / {@code ImGui.end} with
+ * {@link imgui.flag.ImGuiWindowFlags#MenuBar} set on the parent window.
+ */
 public class MenuBar {
 
     private final AboutDialog aboutDialog = BaudBound.getAboutDialog();

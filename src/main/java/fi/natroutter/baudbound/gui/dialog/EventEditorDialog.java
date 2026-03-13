@@ -27,6 +27,17 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 
+/**
+ * Modal editor for creating and modifying {@link DataStore.Event} entries.
+ * <p>
+ * Supports both {@link DialogMode#CREATE} and {@link DialogMode#EDIT} modes, selected
+ * via the {@link #show(DialogMode, DataStore.Event)} overload. In EDIT mode the existing
+ * event's data is pre-loaded into the ImGui state fields.
+ * <p>
+ * Conditions and actions are backed by parallel lists of ImGui state objects. Mutations
+ * (remove, reorder) are deferred until after the table rendering loop to avoid modifying
+ * lists while iterating.
+ */
 public class EventEditorDialog extends BaseDialog {
 
     private final StorageProvider storage = BaudBound.getStorageProvider();
@@ -389,6 +400,10 @@ public class EventEditorDialog extends BaseDialog {
         }
     }
 
+    /**
+     * Validates all condition rows and returns a human-readable error message if any
+     * condition is invalid, or {@code null} if all pass.
+     */
     private String validateConditions() {
         for (int i = 0; i < fieldConditions.size(); i++) {
             ConditionType type = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
@@ -431,6 +446,7 @@ public class EventEditorDialog extends BaseDialog {
         return null;
     }
 
+    /** Converts the current ImGui condition state into a list of {@link DataStore.Event.Condition} objects. */
     private List<DataStore.Event.Condition> buildConditions() {
         List<DataStore.Event.Condition> conditions = new ArrayList<>();
         for (int i = 0; i < fieldConditions.size(); i++) {
@@ -442,6 +458,10 @@ public class EventEditorDialog extends BaseDialog {
         return conditions;
     }
 
+    /**
+     * Converts the current ImGui action state into a list of {@link DataStore.Event.Action} objects.
+     * Actions with a blank value are omitted unless the type allows empty values (e.g. PLAY_SOUND).
+     */
     private List<DataStore.Event.Action> buildActions() {
         List<DataStore.Event.Action> actions = new ArrayList<>();
         for (int i = 0; i < fieldActionTypes.size(); i++) {

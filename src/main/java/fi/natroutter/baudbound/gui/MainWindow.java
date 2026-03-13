@@ -20,6 +20,13 @@ import imgui.type.ImInt;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * The primary full-screen window that fills the entire GLFW surface.
+ * <p>
+ * Renders the event list with Create / Edit / Duplicate / Delete / reorder controls,
+ * a Connect / Disconnect button that changes color when connected, and a color-coded
+ * status label at the bottom. The menu bar is delegated to {@link MenuBar}.
+ */
 public class MainWindow {
 
     private final StorageProvider storage = BaudBound.getStorageProvider();
@@ -33,6 +40,7 @@ public class MainWindow {
 
     private final MenuBar menuBar = new MenuBar();
 
+    /** Renders the full-screen window. Must be called from the GLFW main thread each frame. */
     public void render() {
         ImGui.setNextWindowPos(0, 0, ImGuiCond.Always);
         ImGui.setNextWindowSize(ImGui.getIO().getDisplaySizeX(), ImGui.getIO().getDisplaySizeY());

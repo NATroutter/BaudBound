@@ -35,6 +35,21 @@ import javax.imageio.ImageIO;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.glfw.GLFWImage;
 
+/**
+ * Application entry point and singleton registry for all major subsystems.
+ * <p>
+ * Extends imgui-java's {@link Application} to drive the GLFW + ImGui render loop.
+ * All singleton services (storage, serial, dialogs) are initialized in {@link #main}
+ * before {@link #launch} is called and are accessible via static getters throughout
+ * the application.
+ * <p>
+ * Cross-thread notes:
+ * <ul>
+ *   <li>GLFW calls must happen on the GLFW main thread only.</li>
+ *   <li>AWT tray callbacks set {@code volatile} flags ({@code pendingShow},
+ *       {@code pendingExit}) that are consumed in {@link #process()} on the GLFW thread.</li>
+ * </ul>
+ */
 public class BaudBound extends Application {
 
     public static final String APP_NAME = "BaudBound";

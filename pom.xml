@@ -16,6 +16,13 @@
 	</description>
 	<url>https://github.com/NATroutter/BaudBound</url>
 
+	<distributionManagement>
+		<repository>
+			<id>repo.nat.gg</id>
+			<url>https://repo.nat.gg/releases</url>
+		</repository>
+	</distributionManagement>
+
 	<developers>
 		<developer>
 			<id>0</id>

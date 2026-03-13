@@ -21,6 +21,16 @@ import imgui.type.ImString;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Modal editor for creating and modifying {@link DataStore.Actions.Webhook} entries.
+ * <p>
+ * Supports both {@link DialogMode#CREATE} and {@link DialogMode#EDIT} modes. In EDIT mode
+ * the existing webhook's data is pre-loaded into the ImGui state fields.
+ * <p>
+ * The "Test Webhook" button fires the request on a virtual thread so the UI stays
+ * responsive; the {@code testing} flag disables the button while the request is in flight.
+ * When dismissed via the X button, {@link #onClose()} reopens {@link WebhooksDialog}.
+ */
 public class WebhookEditorDialog extends BaseDialog {
 
     private final FoxLogger logger = BaudBound.getLogger();
@@ -142,6 +152,10 @@ public class WebhookEditorDialog extends BaseDialog {
         }
     }
 
+    /**
+     * Converts the current header row state into a list of {@link DataStore.Actions.Webhook.Header}.
+     * Rows with a blank key are silently skipped (HTTP spec requires a valid field name).
+     */
     private List<DataStore.Actions.Webhook.Header> buildHeaders() {
         List<DataStore.Actions.Webhook.Header> headers = new ArrayList<>();
         for (ImString[] pair : fieldHeaders) {
@@ -152,6 +166,11 @@ public class WebhookEditorDialog extends BaseDialog {
         return headers;
     }
 
+    /**
+     * Fires a test request using the current field values on a virtual thread.
+     * Shows a result dialog on completion. The {@code testing} flag prevents concurrent
+     * test runs while one is already in flight.
+     */
     private void testWebhook() {
         String url = fieldUrl.get().trim();
         if (url.isEmpty()) {

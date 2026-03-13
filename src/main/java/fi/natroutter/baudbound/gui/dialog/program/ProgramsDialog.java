@@ -12,6 +12,13 @@ import imgui.type.ImInt;
 import java.util.List;
 
 
+/**
+ * Modal list dialog for managing saved program definitions.
+ * <p>
+ * Displays all programs in a scrollable list with Create / Edit / Duplicate / Delete buttons.
+ * Create and Edit close this dialog first and open {@link ProgramEditorDialog} instead;
+ * {@code ProgramEditorDialog} reopens this dialog via {@code onClose()}.
+ */
 public class ProgramsDialog extends BaseDialog {
 
     private final StorageProvider storage = BaudBound.getStorageProvider();

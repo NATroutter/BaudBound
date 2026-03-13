@@ -6,6 +6,13 @@ import imgui.ImVec4;
 import imgui.flag.ImGuiCol;
 import imgui.flag.ImGuiDir;
 
+/**
+ * Shared visual constants and the application's ImGui theme.
+ * <p>
+ * Call {@link #applyDarkRuda()} once during {@code initImGui} to apply the dark Ruda-inspired
+ * color scheme. The {@link #BUTTON_HEIGHT} and {@link #COLOR_DELETE_BUTTON} constants are
+ * referenced throughout the UI to keep sizing and destructive-action coloring consistent.
+ */
 public class GuiTheme {
 
     /** Standard height for action buttons (Create, Save, Connect, etc.). */
@@ -14,6 +21,7 @@ public class GuiTheme {
     /** Red color components (r, g, b, a) for destructive/delete buttons. */
     public static final ImVec4 COLOR_DELETE_BUTTON = new ImVec4(0.6f, 0.1f, 0.1f, 1.0f);
 
+/** Applies the dark Ruda color scheme to the current ImGui style. Call once during startup. */
 public static void applyDarkRuda() {
     // custom1 style from ImThemes
     ImGuiStyle style = ImGui.getStyle();

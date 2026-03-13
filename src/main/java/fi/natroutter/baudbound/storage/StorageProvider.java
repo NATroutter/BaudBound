@@ -7,6 +7,14 @@ import fi.natroutter.baudbound.BaudBound;
 import java.io.File;
 import java.nio.file.Path;
 
+/**
+ * Manages loading and saving the application's {@link DataStore} to {@code storage.json}
+ * in the working directory.
+ * <p>
+ * On construction the file is read and parsed; if absent a default-populated file is
+ * written via the embedded resource template. Call {@link #save()} after any mutation
+ * to {@code DataStore} to persist the change.
+ */
 public class StorageProvider {
 
     private final FoxLogger logger = BaudBound.getLogger();
@@ -30,6 +38,11 @@ public class StorageProvider {
                 .build();
     }
 
+    /**
+     * Returns the loaded {@link DataStore}.
+     *
+     * @throws IllegalStateException if called before the store has been initialized
+     */
     public DataStore getData() {
         if (data == null) {
             throw new IllegalStateException("DataStore accessed before initialization");
@@ -37,6 +50,7 @@ public class StorageProvider {
         return data;
     }
 
+    /** Persists the current {@link DataStore} state to disk. No-op if data is null. */
     public void save() {
         if (data != null) {
             logger.info("Datastore saved");

@@ -17,6 +17,14 @@ import imgui.type.ImString;
 
 import java.util.List;
 
+/**
+ * Modal editor for creating and modifying {@link DataStore.Actions.Program} entries.
+ * <p>
+ * Supports both {@link DialogMode#CREATE} and {@link DialogMode#EDIT} modes. In EDIT mode
+ * the existing program's data is pre-loaded into the ImGui state fields.
+ * An empty arguments field is stored as {@code null} rather than an empty string.
+ * When dismissed via the X button, {@link #onClose()} reopens {@link ProgramsDialog}.
+ */
 public class ProgramEditorDialog extends BaseDialog {
 
     private final FoxLogger logger = BaudBound.getLogger();
