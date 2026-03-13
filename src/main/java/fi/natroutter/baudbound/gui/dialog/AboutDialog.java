@@ -17,6 +17,8 @@ public class AboutDialog extends BaseDialog {
     private static final String REPO_OWNER = "NATroutter";
     private static final String REPO_NAME = "BaudBound";
     private static final String GITHUB = "https://github.com/" + REPO_OWNER + "/" + REPO_NAME;
+    private static final String AUTHOR_GITHUB = "https://github.com/" + REPO_OWNER;
+    private static final String AUTHOR_WEBSITE = "https://natroutter.fi";
 
     private VersionInfo versionInfo = null;
     private boolean checkingForUpdates = false;
@@ -71,7 +73,6 @@ public class AboutDialog extends BaseDialog {
             }
 
             ImGui.text("Build Date: " + BaudBound.BUILD_DATE);
-            ImGui.text("Author: " + AUTHOR);
             ImGui.spacing();
 
             ImGui.separator();
@@ -81,11 +82,24 @@ public class AboutDialog extends BaseDialog {
 
             ImGui.text("GitHub: ");
             ImGui.sameLine();
-            GuiHelper.renderClickableLink(GITHUB, GITHUB);
+            GuiHelper.clickableLink(GITHUB, GITHUB);
 
-            ImGui.text("Website: ");
+            ImGui.text("Website:");
             ImGui.sameLine();
-            GuiHelper.renderClickableLink("https://natroutter.fi", "https://natroutter.fi");
+            GuiHelper.clickableLink("https://baudbound.app", "https://baudbound.app");
+
+            ImGui.spacing();
+            ImGui.separator();
+            ImGui.spacing();
+
+            ImGui.text("Developer:");
+            ImGui.text("Name:    " + AUTHOR);
+            ImGui.text("GitHub: ");
+            ImGui.sameLine();
+            GuiHelper.clickableLink(AUTHOR_GITHUB, AUTHOR_GITHUB);
+            ImGui.text("Website:");
+            ImGui.sameLine();
+            GuiHelper.clickableLink(AUTHOR_WEBSITE, AUTHOR_WEBSITE);
 
             ImGui.spacing();
             ImGui.separator();

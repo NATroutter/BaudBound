@@ -107,7 +107,7 @@ public class GuiHelper {
         ImGui.endDisabled();
     }
 
-    public static void renderClickableLink(String label, String url) {
+    public static void clickableLink(String label, String url) {
         ImGui.textColored(0.3f, 0.7f, 1.0f, 1.0f, label);
         if (ImGui.isItemHovered()) {
             ImGui.setMouseCursor(ImGuiMouseCursor.Hand);
