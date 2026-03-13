@@ -12,10 +12,9 @@
 
 	<name>BaudBound</name>
 	<description>
-		A lightweight event-driven automation engine that maps serial port data
-		to system actions, webhooks, and other custom actions
+		BaudBound listens to a serial port and fires configurable actions whenever incoming data matches your conditions. Hook up any serial device — a microcontroller, a barcode scanner, a custom sensor — and turn its output into webhooks, launched programs, opened URLs, or simulated keystrokes.
 	</description>
-	<url>https://baudbound.app</url>
+	<url>https://github.com/NATroutter/BaudBound</url>
 
 	<developers>
 		<developer>
@@ -34,9 +33,16 @@
 		<maven.compiler.target>21</maven.compiler.target>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<mainClass>${groupId}.BaudBound</mainClass>
+		<maven.build.timestamp.format>M-d-yyyy</maven.build.timestamp.format>
 	</properties>
 
 	<build>
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>true</filtering>
+			</resource>
+		</resources>
 		<plugins>
 
 			<!-- Maven source plugin -->

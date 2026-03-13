@@ -29,16 +29,25 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.util.Properties;
 import javax.imageio.ImageIO;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.glfw.GLFWImage;
 
 public class BaudBound extends Application {
 
-    // Format: month-day-year
-    public static String APP_NAME = "BaudBound";
-    public static String BUILD_DATE = "3-10-2025";
-    public static String VERSION = "1.0.0";
+    public static final String APP_NAME = "BaudBound";
+    public static final String VERSION;
+    public static final String BUILD_DATE;
+
+    static {
+        Properties props = new Properties();
+        try (InputStream is = BaudBound.class.getResourceAsStream("/build.properties")) {
+            if (is != null) props.load(is);
+        } catch (IOException ignored) {}
+        VERSION    = props.getProperty("version",    "unknown");
+        BUILD_DATE = props.getProperty("build.date", "unknown");
+    }
 
     @Getter private static FoxLogger logger;
     @Getter private static StorageProvider storageProvider;
@@ -55,7 +64,13 @@ public class BaudBound extends Application {
 
     private static MainWindow mainWindow;
 
-    private TrayIcon trayIcon = null;
+    private static TrayIcon trayIcon = null;
+
+    public static void showNotification(String title, String message, TrayIcon.MessageType type) {
+        if (trayIcon != null) {
+            trayIcon.displayMessage(title, message, type);
+        }
+    }
     private volatile boolean pendingShow = false;
     private volatile boolean pendingExit = false;
     private MenuItem connectMenuItem = null;
@@ -123,7 +138,7 @@ public class BaudBound extends Application {
 
     @Override
     protected void configure(final Configuration config) {
-        config.setTitle(APP_NAME+" | v"+VERSION);
+        config.setTitle(APP_NAME);
         config.setWidth(1280);
         config.setHeight(720);
     }

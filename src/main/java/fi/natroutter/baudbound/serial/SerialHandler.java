@@ -56,13 +56,21 @@ public class SerialHandler {
         port.setNumStopBits(device.getStopBits() > 0 ? device.getStopBits() : 1);
 
         if (device.getParity() != null) {
-            Parity parity = Parity.valueOf(device.getParity());
-            port.setParity(parity.getBit());
+            try {
+                Parity parity = Parity.valueOf(device.getParity());
+                port.setParity(parity.getBit());
+            } catch (IllegalArgumentException e) {
+                logger.error("Unknown parity value: " + device.getParity());
+            }
         }
 
         if (device.getFlowControl() != null) {
-            FlowControl flowControl = FlowControl.valueOf(device.getFlowControl());
-            port.setFlowControl(flowControl.getBit());
+            try {
+                FlowControl flowControl = FlowControl.valueOf(device.getFlowControl());
+                port.setFlowControl(flowControl.getBit());
+            } catch (IllegalArgumentException e) {
+                logger.error("Unknown flow control value: " + device.getFlowControl());
+            }
         }
 
         port.setComPortTimeouts(SerialPort.TIMEOUT_NONBLOCKING, 0, 0);
@@ -198,7 +206,7 @@ public class SerialHandler {
         SerialPort[] ports = SerialPort.getCommPorts();
         if (ports.length == 0) {
             logger.error("No serial ports found");
-            return null;
+            return List.of();
         }
         return Arrays.asList(ports);
     }

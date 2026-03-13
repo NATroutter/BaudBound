@@ -40,7 +40,7 @@ public class MessageDialog {
             ImGui.setNextWindowSize(300, 200, ImGuiCond.Appearing);
         }
 
-      if (ImGui.beginPopupModal(popupId, ImGuiWindowFlags.AlwaysAutoResize)) {
+        if (ImGui.beginPopupModal(popupId, ImGuiWindowFlags.AlwaysAutoResize)) {
             ImGui.textWrapped(message);
             ImGui.spacing();
             ImGui.separator();

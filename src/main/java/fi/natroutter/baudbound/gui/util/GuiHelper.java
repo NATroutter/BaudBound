@@ -1,18 +1,16 @@
 package fi.natroutter.baudbound.gui.util;
 
+import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
-import fi.natroutter.baudbound.gui.dialog.MessageDialog;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.foxlib.FoxLib;
-import fi.natroutter.foxlib.logger.FoxLogger;
-import fi.natroutter.baudbound.BaudBound;
 import imgui.ImGui;
 import imgui.ImVec2;
 import imgui.flag.ImGuiCol;
 import imgui.flag.ImGuiMouseCursor;
+import imgui.flag.ImGuiStyleVar;
 import imgui.flag.ImGuiTableColumnFlags;
 import imgui.flag.ImGuiTableFlags;
-import imgui.flag.ImGuiStyleVar;
 import imgui.type.ImInt;
 import imgui.type.ImString;
 
@@ -23,136 +21,148 @@ import java.util.function.Consumer;
 
 public class GuiHelper {
 
-    private static FoxLogger logger = BaudBound.getLogger();
-    private static MessageDialog messageDialog = BaudBound.getMessageDialog();
-
-
-    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, Runnable buttonCreate, Runnable buttonEdit, Runnable buttonDuplicate, Runnable buttonDelete, Runnable errorCallback) {
-        listAndEditorButtons(id, data, selected, fillHeight, 0f, buttonCreate, buttonEdit, buttonDuplicate, buttonDelete, errorCallback);
+    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onError) {
+        listAndEditorButtons(id, data, selected, fillHeight, 0f, onCreate, onEdit, onDuplicate, onDelete, ()->{}, ()->{}, onError);
     }
 
-    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, float reservedHeight, Runnable buttonCreate, Runnable buttonEdit, Runnable buttonDuplicate, Runnable buttonDelete, Runnable errorCallback) {
+    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, float reservedHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onError) {
+        listAndEditorButtons(id, data, selected, fillHeight, reservedHeight, onCreate, onEdit, onDuplicate, onDelete, ()->{}, ()->{}, onError);
+    }
+
+    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onMoveUp, Runnable onMoveDown, Runnable onError) {
+        listAndEditorButtons(id, data, selected, fillHeight, 0f, onCreate, onEdit, onDuplicate, onDelete, onMoveUp, onMoveDown, onError);
+    }
+
+    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, float reservedHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onMoveUp, Runnable onMoveDown, Runnable onError) {
         float itemSpacing = ImGui.getStyle().getItemSpacingY();
         float lineHeight = ImGui.getTextLineHeightWithSpacing();
 
-        // listbox_gap(itemSpacing) + spacing(itemSpacing) + separator(1+itemSpacing) + spacing(itemSpacing) + button(20)
         float footerHeight = itemSpacing * 4 + 21;
         float listHeight = fillHeight
                 ? ImGui.getContentRegionAvailY() - footerHeight - reservedHeight
                 : lineHeight * Math.max(data.size(), 3) + ImGui.getStyle().getFramePaddingY() * 2;
 
         if (ImGui.beginListBox(id, new ImVec2(ImGui.getContentRegionAvailX(), listHeight))) {
+            ImGui.spacing();
             for (int n = 0; n < data.size(); n++) {
-                boolean is_selected = (selected.get() == n);
-                if (is_selected) {
+                boolean isSelected = (selected.get() == n);
+                if (isSelected) {
                     ImGui.pushStyleColor(ImGuiCol.Header, 0.25882354f, 0.5882353f, 0.9764706f, 0.5f);
                     ImGui.pushStyleColor(ImGuiCol.HeaderHovered, 0.25882354f, 0.5882353f, 0.9764706f, 0.8f);
                 }
-                if (ImGui.selectable(data.get(n).getName(), is_selected)) {
+                if (ImGui.selectable(data.get(n).getName(), isSelected)) {
                     selected.set(n);
                 }
-                if (is_selected) {
+                if (isSelected) {
                     ImGui.popStyleColor(2);
                     ImGui.setItemDefaultFocus();
                 }
             }
+            ImGui.spacing();
             ImGui.endListBox();
         }
 
-        // Buttons
         ImGui.spacing();
         ImGui.separator();
         ImGui.spacing();
-        float btnWidth = (ImGui.getContentRegionAvailX() - ImGui.getStyle().getItemSpacingX() * 3) / 4;
+
+        float spacing   = ImGui.getStyle().getItemSpacingX();
+        float arrowWidth = 26;
+        float remaining  = ImGui.getContentRegionAvailX() - (arrowWidth + spacing) * 2;
+        float btnWidth   = (remaining - spacing * 3) / 4;
+
         if (ImGui.button("Create", new ImVec2(btnWidth, 20))) {
-            buttonCreate.run();
+            onCreate.run();
         }
         ImGui.sameLine();
         if (ImGui.button("Edit", new ImVec2(btnWidth, 20))) {
             if (!data.isEmpty()) {
-                buttonEdit.run();
+                onEdit.run();
             } else {
-                messageDialog.show("Error", "No items to edit.", new DialogButton("OK", errorCallback));
+                BaudBound.getMessageDialog().show("Error", "No items to edit.", new DialogButton("OK", onError));
             }
         }
         ImGui.sameLine();
         if (ImGui.button("Duplicate", new ImVec2(btnWidth, 20))) {
             if (!data.isEmpty()) {
-                buttonDuplicate.run();
+                onDuplicate.run();
             } else {
-                messageDialog.show("Error", "No items to duplicate.", new DialogButton("OK", errorCallback));
+                BaudBound.getMessageDialog().show("Error", "No items to duplicate.", new DialogButton("OK", onError));
             }
         }
         ImGui.sameLine();
         if (ImGui.button("Delete", new ImVec2(btnWidth, 20))) {
             if (!data.isEmpty()) {
-                buttonDelete.run();
+                onDelete.run();
             } else {
-                messageDialog.show("Error", "No items to delete.", new DialogButton("OK", errorCallback));
+                BaudBound.getMessageDialog().show("Error", "No items to delete.", new DialogButton("OK", onError));
             }
         }
+        ImGui.sameLine();
+        ImGui.beginDisabled(data.isEmpty() || selected.get() == 0);
+        if (ImGui.button("^##up" + id, new ImVec2(arrowWidth, 20))) {
+            onMoveUp.run();
+        }
+        ImGui.endDisabled();
+        ImGui.sameLine();
+        ImGui.beginDisabled(data.isEmpty() || selected.get() >= data.size() - 1);
+        if (ImGui.button("v##dn" + id, new ImVec2(arrowWidth, 20))) {
+            onMoveDown.run();
+        }
+        ImGui.endDisabled();
     }
 
     public static void renderClickableLink(String label, String url) {
         ImGui.textColored(0.3f, 0.7f, 1.0f, 1.0f, label);
-
         if (ImGui.isItemHovered()) {
             ImGui.setMouseCursor(ImGuiMouseCursor.Hand);
-
-            // Draw underline
             ImVec2 min = ImGui.getItemRectMin();
             ImVec2 max = ImGui.getItemRectMax();
-            ImGui.getWindowDrawList().addLine(
-                    min.x, max.y,
-                    max.x, max.y,
-                    ImGui.getColorU32(0.3f, 0.7f, 1.0f, 1.0f)
-            );
+            ImGui.getWindowDrawList().addLine(min.x, max.y, max.x, max.y, ImGui.getColorU32(0.3f, 0.7f, 1.0f, 1.0f));
         }
-
         if (ImGui.isItemClicked()) {
             try {
                 FoxLib.openURL(url);
             } catch (IOException e) {
-                logger.error("Failed to open URL '" + url + "': " + e.getMessage());
+                BaudBound.getLogger().error("Failed to open URL '" + url + "': " + e.getMessage());
             }
         }
     }
 
-    public static void toolTip(String content){
+    public static void toolTip(String content) {
         ImGui.sameLine();
         ImGui.textDisabled("(?)");
         ImGui.setItemTooltip(content);
     }
 
-    public static void instructions() {instructions("next fields");}
-    public static void instructions(String palce) {
-        ImGui.text("Instructions");
+    public static void instructions() { instructions("next fields"); }
+    public static void instructions(String place) {
         ImGui.beginDisabled();
-        ImGui.text("You can use this variables in "+palce+":");
-        ImGui.bulletText("{input} - This is the content that was read from the serial port.");
-        ImGui.bulletText("{timestamp} - This is the timestamp when the input was read from the serial port.");
+        ImGui.text("You can use these variables in " + place + ":");
+        ImGui.bulletText("{input} - The content read from the serial port.");
+        ImGui.bulletText("{timestamp} - The timestamp when the input was read.");
         ImGui.endDisabled();
     }
 
-    // Both inputText columns
+    // Both columns are inputText
     public static void keyValueTable(String id, String col0Header, String col1Header, List<ImString[]> rows) {
-        int[] r = renderTable(id, col0Header, col1Header, rows,
+        int[] result = renderTable(id, col0Header, col1Header, rows,
                 row -> ImGui.inputText("##c0" + id + row, rows.get(row)[0]));
         int size = rows.size();
-        if (r[0] >= 0)                      rows.remove(r[0]);
-        if (r[1] > 0)                       Collections.swap(rows, r[1], r[1] - 1);
-        if (r[2] >= 0 && r[2] < size - 1)  Collections.swap(rows, r[2], r[2] + 1);
+        if (result[0] >= 0)                        rows.remove(result[0]);
+        if (result[1] > 0)                         Collections.swap(rows, result[1], result[1] - 1);
+        if (result[2] >= 0 && result[2] < size - 1) Collections.swap(rows, result[2], result[2] + 1);
     }
 
     // Column 0 is a combo, column 1 is inputText
     public static void keyValueTable(String id, String col0Header, String col1Header,
                                      List<ImString[]> rows, String[] col0Options, List<ImInt> col0Selections) {
-        int[] r = renderTable(id, col0Header, col1Header, rows,
+        int[] result = renderTable(id, col0Header, col1Header, rows,
                 row -> ImGui.combo("##c0" + id + row, col0Selections.get(row), col0Options));
         int size = rows.size();
-        if (r[0] >= 0)                      { rows.remove(r[0]); col0Selections.remove(r[0]); }
-        if (r[1] > 0)                       { Collections.swap(rows, r[1], r[1] - 1); Collections.swap(col0Selections, r[1], r[1] - 1); }
-        if (r[2] >= 0 && r[2] < size - 1)  { Collections.swap(rows, r[2], r[2] + 1); Collections.swap(col0Selections, r[2], r[2] + 1); }
+        if (result[0] >= 0)                        { rows.remove(result[0]); col0Selections.remove(result[0]); }
+        if (result[1] > 0)                         { Collections.swap(rows, result[1], result[1] - 1); Collections.swap(col0Selections, result[1], result[1] - 1); }
+        if (result[2] >= 0 && result[2] < size - 1) { Collections.swap(rows, result[2], result[2] + 1); Collections.swap(col0Selections, result[2], result[2] + 1); }
     }
 
     // Returns int[]{removeIndex, moveUpIndex, moveDownIndex}
@@ -201,5 +211,4 @@ public class GuiHelper {
 
         return new int[]{removeIndex, moveUpIndex, moveDownIndex};
     }
-
 }

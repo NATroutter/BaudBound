@@ -1,17 +1,20 @@
 package fi.natroutter.baudbound.gui.dialog;
 
-import fi.natroutter.foxlib.logger.FoxLogger;
 import fi.natroutter.baudbound.BaudBound;
-import fi.natroutter.baudbound.enums.ConditionType;
-import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
-import fi.natroutter.baudbound.enums.DialogMode;
 import fi.natroutter.baudbound.enums.ActionType;
+import fi.natroutter.baudbound.enums.ConditionType;
+import fi.natroutter.baudbound.enums.DialogMode;
+import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
 import imgui.ImVec2;
-import imgui.flag.*;
+import imgui.flag.ImGuiChildFlags;
+import imgui.flag.ImGuiCol;
+import imgui.flag.ImGuiStyleVar;
+import imgui.flag.ImGuiTableColumnFlags;
+import imgui.flag.ImGuiTableFlags;
 import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 import imgui.type.ImString;
@@ -19,30 +22,30 @@ import imgui.type.ImString;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 
-public class EventEditorDialog {
+public class EventEditorDialog extends BaseDialog {
 
-    private FoxLogger logger = BaudBound.getLogger();
-    private StorageProvider storage = BaudBound.getStorageProvider();
-
-    // Conditions
-    private final List<ImString[]> fieldConditions = new ArrayList<>();
-    private final List<ImInt> fieldConditionKeys = new ArrayList<>();
-
-    // Actions
-    private final List<ImInt> fieldActionTypes = new ArrayList<>();
-    private final List<ImInt> fieldActionComboValues = new ArrayList<>();
-    private final List<ImString> fieldActionTextValues = new ArrayList<>();
+    private final StorageProvider storage = BaudBound.getStorageProvider();
 
     private final ImString fieldName = new ImString();
+
+    // Conditions
+    private final List<ImString[]> fieldConditions          = new ArrayList<>();
+    private final List<ImInt>      fieldConditionKeys       = new ArrayList<>();
+    private final List<ImBoolean>  fieldConditionCaseSens   = new ArrayList<>();
+
+    // Actions
+    private final List<ImInt>    fieldActionTypes      = new ArrayList<>();
+    private final List<ImInt>    fieldActionComboValues = new ArrayList<>();
+    private final List<ImString> fieldActionTextValues  = new ArrayList<>();
 
     private String[] webhookNames = {};
     private String[] programNames = {};
 
     private DialogMode mode = DialogMode.CREATE;
-    private boolean open = false;
-    private final ImBoolean modalOpen = new ImBoolean(false);
     private DataStore.Event editing = null;
 
     public void show() {
@@ -50,7 +53,6 @@ public class EventEditorDialog {
     }
 
     public void show(DialogMode dialogMode, DataStore.Event event) {
-        this.open = true;
         this.mode = dialogMode;
 
         webhookNames = storage.getData().getActions().getWebhooks().stream()
@@ -60,6 +62,7 @@ public class EventEditorDialog {
 
         fieldConditions.clear();
         fieldConditionKeys.clear();
+        fieldConditionCaseSens.clear();
         fieldActionTypes.clear();
         fieldActionComboValues.clear();
         fieldActionTextValues.clear();
@@ -74,19 +77,19 @@ public class EventEditorDialog {
                     val.set(c.getValue() != null ? c.getValue() : "");
                     fieldConditions.add(new ImString[]{new ImString(128), val});
                     fieldConditionKeys.add(new ImInt(ConditionType.findIndex(c.getType())));
+                    fieldConditionCaseSens.add(new ImBoolean(c.isCaseSensitive()));
                 }
             }
 
             if (event.getActions() != null) {
                 for (DataStore.Event.Action a : event.getActions()) {
-                    ActionType aType = ActionType.getByName(a.getType());
-                    if (aType == null) aType = ActionType.values()[0];
-                    fieldActionTypes.add(new ImInt(aType.ordinal()));
+                    ActionType actionType = ActionType.getByName(a.getType());
+                    if (actionType == null) actionType = ActionType.values()[0];
+                    fieldActionTypes.add(new ImInt(actionType.ordinal()));
 
                     ImInt comboVal = new ImInt(0);
                     ImString textVal = new ImString(512);
-
-                    switch (aType) {
+                    switch (actionType) {
                         case CALL_WEBHOOK -> {
                             for (int i = 0; i < webhookNames.length; i++) {
                                 if (webhookNames[i].equals(a.getValue())) { comboVal.set(i); break; }
@@ -97,9 +100,10 @@ public class EventEditorDialog {
                                 if (programNames[i].equals(a.getValue())) { comboVal.set(i); break; }
                             }
                         }
-                        case OPEN_URL, TYPE_TEXT -> textVal.set(a.getValue() != null ? a.getValue() : "");
+                        case OPEN_URL, TYPE_TEXT,
+                             COPY_TO_CLIPBOARD, SHOW_NOTIFICATION,
+                             WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> textVal.set(a.getValue() != null ? a.getValue() : "");
                     }
-
                     fieldActionComboValues.add(comboVal);
                     fieldActionTextValues.add(textVal);
                 }
@@ -108,75 +112,57 @@ public class EventEditorDialog {
             this.editing = null;
             fieldName.set("");
         }
-    }
 
-    private void reopen() {
-        this.open = true;
+        requestOpen();
     }
 
     public void render() {
-        String popupTitle = mode.getType() + " Event";
+        String title = mode.getType() + " Event";
+        if (beginModal(title)) {
 
-        if (open) {
-            ImGui.openPopup(popupTitle);
-            modalOpen.set(true);
-            open = false;
-        }
-
-        ImGui.setNextWindowPos(
-                ImGui.getIO().getDisplaySizeX() / 2,
-                ImGui.getIO().getDisplaySizeY() / 2,
-                ImGuiCond.Always,
-                0.5f, 0.5f
-        );
-        ImGui.setNextWindowSizeConstraints(ImGui.getIO().getDisplaySizeX() * 0.9f, 0, ImGui.getIO().getDisplaySizeX() * 0.9f, Float.MAX_VALUE);
-
-        boolean wasOpen = ImGui.isPopupOpen(popupTitle);
-        if (ImGui.beginPopupModal(popupTitle, modalOpen, ImGuiWindowFlags.AlwaysAutoResize)) {
+            if (ImGui.beginChild("##instructions_wrap", ImGui.getContentRegionAvailX(), 0, ImGuiChildFlags.AutoResizeY)) {
+                if (ImGui.collapsingHeader("Instructions")) {
+                    ImGui.indent(8);
+                    ImGui.spacing();
+                    GuiHelper.instructions("the value fields");
+                    ImGui.spacing();
+                    renderActionHints();
+                    ImGui.spacing();
+                    ImGui.unindent(8);
+                }
+            }
+            ImGui.endChild();
+            ImGui.spacing();
 
             ImGui.text("Name");
-            GuiHelper.toolTip("This is the name of the event. it will be displayed in the event list.");
+            GuiHelper.toolTip("Name of the event as shown in the event list.");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-            ImGui.beginDisabled(mode == DialogMode.EDIT);
             ImGui.inputText("##name", fieldName);
-            ImGui.endDisabled();
 
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
 
-            // --- Conditions ---
             ImGui.text("Conditions");
-            GuiHelper.toolTip("Conditions that must be met for the event to trigger.");
-
-            GuiHelper.keyValueTable("##conditions", "Condition", "Value",
-                    fieldConditions, ConditionType.asFriendlyArray(), fieldConditionKeys);
-
+            GuiHelper.toolTip("All conditions must match for the event to trigger.");
+            renderConditionsTable();
             ImGui.spacing();
             if (ImGui.button("Add Condition", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
                 fieldConditions.add(new ImString[]{new ImString(128), new ImString(256)});
                 fieldConditionKeys.add(new ImInt(0));
+                fieldConditionCaseSens.add(new ImBoolean(false));
             }
 
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
 
-            // --- Actions ---
             ImGui.text("Actions");
             GuiHelper.toolTip("Actions performed when all conditions are met.");
 
-            boolean hasTextAction = fieldActionTypes.stream().anyMatch(t -> {
-                ActionType at = ActionType.values()[t.get()];
-                return at == ActionType.OPEN_URL || at == ActionType.TYPE_TEXT;
-            });
-            if (hasTextAction) {
-                ImGui.spacing();
-                GuiHelper.instructions("the value fields");
-                ImGui.spacing();
-            }
-
+            ImGui.spacing();
             renderActionsTable();
+            ImGui.spacing();
 
             ImGui.spacing();
             if (ImGui.button("Add Action", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
@@ -185,7 +171,6 @@ public class EventEditorDialog {
                 fieldActionTextValues.add(new ImString(512));
             }
 
-            // Buttons
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
@@ -193,16 +178,131 @@ public class EventEditorDialog {
                 save();
             }
 
-            ImGui.endPopup();
-        } else if (wasOpen && !modalOpen.get()) {
-            modalOpen.set(true);
+            endModal();
+        }
+    }
+
+    private void renderActionHints() {
+        ImGui.spacing();
+        ImGui.text("Format hints");
+        ImGui.beginDisabled();
+
+        ImGui.text("Write to File:");
+        ImGui.bulletText("Overwrites the file with new content on each trigger.");
+        ImGui.bulletText("Value: path  — writes \"{timestamp}: {input}\".");
+        ImGui.bulletText("Value: path|content  — writes custom content.");
+        ImGui.bulletText("Example: C:\\logs\\latest.txt|{input}");
+
+        ImGui.spacing();
+        ImGui.text("Append to File:");
+        ImGui.bulletText("Appends a new line to the file on each trigger.");
+        ImGui.bulletText("Value: path  — appends \"{timestamp}: {input}\".");
+        ImGui.bulletText("Value: path|content  — appends custom content.");
+        ImGui.bulletText("Example: C:\\logs\\data.txt|{timestamp}: {input}");
+
+        ImGui.spacing();
+        ImGui.text("Show Notification:");
+        ImGui.bulletText("Value: message  — shows an INFO notification.");
+        ImGui.bulletText("Value: TYPE|message  — TYPE: INFO, WARNING, ERROR, NONE.");
+        ImGui.bulletText("Example: WARNING|Temperature high: {input}");
+
+        ImGui.spacing();
+        ImGui.text("Play Sound:");
+        ImGui.bulletText("Value: path to a .wav file.");
+        ImGui.bulletText("Leave empty to play the system beep.");
+
+        ImGui.spacing();
+        ImGui.text("Copy to Clipboard:");
+        ImGui.bulletText("Text is placed in the clipboard without pasting.");
+
+        ImGui.endDisabled();
+    }
+
+    private void renderConditionsTable() {
+        int removeIndex = -1, moveUpIndex = -1, moveDownIndex = -1;
+
+        ImGui.pushStyleVar(ImGuiStyleVar.CellPadding, 4, 6);
+        if (ImGui.beginTable("##conditions_table", 6,
+                ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame)) {
+
+            ImGui.tableSetupColumn("Condition", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.tableSetupColumn("Value",     ImGuiTableColumnFlags.WidthStretch);
+            ImGui.tableSetupColumn("Case sensitive",        ImGuiTableColumnFlags.WidthFixed, ImGui.calcTextSizeX("Case sensitive"));
+            ImGui.tableSetupColumn("##cup",     ImGuiTableColumnFlags.WidthFixed, 22);
+            ImGui.tableSetupColumn("##cdn",     ImGuiTableColumnFlags.WidthFixed, 22);
+            ImGui.tableSetupColumn("##crm",     ImGuiTableColumnFlags.WidthFixed, 22);
+            ImGui.tableHeadersRow();
+
+            for (int i = 0; i < fieldConditions.size(); i++) {
+                ImGui.tableNextRow();
+
+                ImGui.tableSetColumnIndex(0);
+                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                ImGui.combo("##ctype" + i, fieldConditionKeys.get(i), ConditionType.asFriendlyArray());
+
+                ConditionType condType = ConditionType.values()[fieldConditionKeys.get(i).get()];
+                boolean noValue = condType == ConditionType.IS_NUMERIC;
+                boolean noCase  = noValue || condType == ConditionType.REGEX
+                        || condType == ConditionType.GREATER_THAN || condType == ConditionType.LESS_THAN
+                        || condType == ConditionType.BETWEEN       || condType == ConditionType.LENGTH_EQUALS;
+                if (noValue) {
+                    fieldConditions.get(i)[1].set("");
+                    fieldConditionCaseSens.get(i).set(false);
+                }
+
+                ImGui.tableSetColumnIndex(1);
+                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                ImGui.beginDisabled(noValue);
+                ImGui.inputText("##cval" + i, fieldConditions.get(i)[1]);
+                ImGui.endDisabled();
+
+                ImGui.tableSetColumnIndex(2);
+                ImGui.beginDisabled(noCase);
+                float checkboxSize = ImGui.getFrameHeight();
+                ImGui.setCursorPosX(ImGui.getCursorPosX() + (ImGui.getContentRegionAvailX() - checkboxSize) / 2);
+                ImGui.checkbox("##ccs" + i, fieldConditionCaseSens.get(i));
+                ImGui.endDisabled();
+
+                ImGui.tableSetColumnIndex(3);
+                ImGui.beginDisabled(i == 0);
+                if (ImGui.button("^##cu" + i)) moveUpIndex = i;
+                ImGui.endDisabled();
+
+                ImGui.tableSetColumnIndex(4);
+                ImGui.beginDisabled(i == fieldConditions.size() - 1);
+                if (ImGui.button("v##cd" + i)) moveDownIndex = i;
+                ImGui.endDisabled();
+
+                ImGui.tableSetColumnIndex(5);
+                ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
+                if (ImGui.button("X##cr" + i)) removeIndex = i;
+                ImGui.popStyleColor();
+            }
+
+            ImGui.endTable();
+        }
+        ImGui.popStyleVar();
+
+        int size = fieldConditions.size();
+        if (removeIndex >= 0) {
+            fieldConditions.remove(removeIndex);
+            fieldConditionKeys.remove(removeIndex);
+            fieldConditionCaseSens.remove(removeIndex);
+        }
+        if (moveUpIndex > 0) {
+            Collections.swap(fieldConditions, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldConditionKeys, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldConditionCaseSens, moveUpIndex, moveUpIndex - 1);
+        }
+        if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
+            Collections.swap(fieldConditions, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldConditionKeys, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldConditionCaseSens, moveDownIndex, moveDownIndex + 1);
         }
     }
 
     private void renderActionsTable() {
-        int removeIndex = -1;
-        int moveUpIndex = -1;
-        int moveDownIndex = -1;
+        int removeIndex = -1, moveUpIndex = -1, moveDownIndex = -1;
 
         ImGui.pushStyleVar(ImGuiStyleVar.CellPadding, 4, 6);
         if (ImGui.beginTable("##actions_table", 5,
@@ -228,11 +328,11 @@ public class EventEditorDialog {
                     }
                 }
 
-                ActionType aType = ActionType.values()[fieldActionTypes.get(i).get()];
+                ActionType actionType = ActionType.values()[fieldActionTypes.get(i).get()];
 
                 ImGui.tableSetColumnIndex(1);
                 ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                switch (aType) {
+                switch (actionType) {
                     case CALL_WEBHOOK -> {
                         if (webhookNames.length > 0) {
                             ImGui.combo("##awh" + i, fieldActionComboValues.get(i), webhookNames);
@@ -247,8 +347,9 @@ public class EventEditorDialog {
                             ImGui.textDisabled("No programs");
                         }
                     }
-                    case OPEN_URL  -> ImGui.inputText("##aurl" + i, fieldActionTextValues.get(i));
-                    case TYPE_TEXT -> ImGui.inputText("##atext" + i, fieldActionTextValues.get(i));
+                    case OPEN_URL, TYPE_TEXT,
+                         COPY_TO_CLIPBOARD, SHOW_NOTIFICATION,
+                         WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> ImGui.inputText("##atext" + i, fieldActionTextValues.get(i));
                 }
 
                 ImGui.tableSetColumnIndex(2);
@@ -289,10 +390,58 @@ public class EventEditorDialog {
         }
     }
 
+    private String validateConditions() {
+        for (int i = 0; i < fieldConditions.size(); i++) {
+            ConditionType type = ConditionType.values()[fieldConditionKeys.get(i).get()];
+            String val = fieldConditions.get(i)[1].get().trim();
+            String label = "Condition " + (i + 1) + " (" + type.getFriendlyName() + "): ";
+
+            switch (type) {
+                case STARTS_WITH, ENDS_WITH, CONTAINS, NOT_CONTAINS, NOT_STARTS_WITH, EQUALS -> {
+                    if (val.isEmpty()) return label + "value cannot be empty.";
+                }
+                case REGEX -> {
+                    if (val.isEmpty()) return label + "value cannot be empty.";
+                    try { Pattern.compile(val); }
+                    catch (PatternSyntaxException e) { return label + "invalid regex pattern: " + e.getDescription(); }
+                }
+                case GREATER_THAN, LESS_THAN -> {
+                    if (val.isEmpty()) return label + "value cannot be empty.";
+                    try { Double.parseDouble(val); }
+                    catch (NumberFormatException e) { return label + "value must be a number (e.g. 42 or 3.14)."; }
+                }
+                case BETWEEN -> {
+                    String[] parts = val.split(",", 2);
+                    if (parts.length != 2) return label + "value must be 'min,max' (e.g. 10,50).";
+                    try {
+                        double min = Double.parseDouble(parts[0].trim());
+                        double max = Double.parseDouble(parts[1].trim());
+                        if (min > max) return label + "min must be less than or equal to max.";
+                    } catch (NumberFormatException e) { return label + "both min and max must be numbers (e.g. 10,50)."; }
+                }
+                case LENGTH_EQUALS -> {
+                    if (val.isEmpty()) return label + "value cannot be empty.";
+                    try {
+                        int len = Integer.parseInt(val);
+                        if (len < 0) return label + "length cannot be negative.";
+                    } catch (NumberFormatException e) { return label + "value must be a whole number (e.g. 5)."; }
+                }
+                case IS_NUMERIC -> {} // no value required
+            }
+        }
+        return null;
+    }
+
     private void save() {
         String name = fieldName.get().trim();
         if (name.isEmpty()) {
-            BaudBound.getMessageDialog().show("Error", "Name is required.", new DialogButton("OK", this::reopen));
+            BaudBound.getMessageDialog().show("Error", "Name is required.", new DialogButton("OK", this::requestOpen));
+            return;
+        }
+
+        String conditionError = validateConditions();
+        if (conditionError != null) {
+            BaudBound.getMessageDialog().show("Error", conditionError, new DialogButton("OK", this::requestOpen));
             return;
         }
 
@@ -300,31 +449,38 @@ public class EventEditorDialog {
         for (int i = 0; i < fieldConditions.size(); i++) {
             String condType = ConditionType.values()[fieldConditionKeys.get(i).get()].name();
             String condValue = fieldConditions.get(i)[1].get().trim();
-            conditions.add(new DataStore.Event.Condition(condType, condValue));
+            boolean caseSensitive = fieldConditionCaseSens.get(i).get();
+            conditions.add(new DataStore.Event.Condition(condType, condValue, caseSensitive));
         }
 
         List<DataStore.Event.Action> actions = new ArrayList<>();
         for (int i = 0; i < fieldActionTypes.size(); i++) {
-            ActionType aType = ActionType.values()[fieldActionTypes.get(i).get()];
-            String value = switch (aType) {
+            ActionType actionType = ActionType.values()[fieldActionTypes.get(i).get()];
+            String value = switch (actionType) {
                 case CALL_WEBHOOK -> webhookNames.length > 0 ? webhookNames[fieldActionComboValues.get(i).get()] : null;
                 case OPEN_PROGRAM -> programNames.length > 0 ? programNames[fieldActionComboValues.get(i).get()] : null;
-                case OPEN_URL, TYPE_TEXT -> fieldActionTextValues.get(i).get().trim();
+                case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
+                     SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> fieldActionTextValues.get(i).get().trim();
             };
-            if (value != null && !value.isBlank()) {
-                actions.add(new DataStore.Event.Action(aType.name(), value));
+            boolean allowEmpty = actionType == ActionType.PLAY_SOUND;
+            if (allowEmpty || (value != null && !value.isBlank())) {
+                actions.add(new DataStore.Event.Action(actionType.name(), value != null ? value : ""));
             }
         }
 
         List<DataStore.Event> events = storage.getData().getEvents();
 
         if (mode == DialogMode.EDIT && editing != null) {
+            if (!editing.getName().equalsIgnoreCase(name) && events.stream().anyMatch(e -> e.getName().equalsIgnoreCase(name))) {
+                BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::requestOpen));
+                return;
+            }
+            editing.setName(name);
             editing.setConditions(conditions);
             editing.setActions(actions);
         } else {
-            boolean nameExists = events.stream().anyMatch(e -> e.getName().equalsIgnoreCase(name));
-            if (nameExists) {
-                BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::reopen));
+            if (events.stream().anyMatch(e -> e.getName().equalsIgnoreCase(name))) {
+                BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::requestOpen));
                 return;
             }
             events.add(new DataStore.Event(name, conditions, actions));

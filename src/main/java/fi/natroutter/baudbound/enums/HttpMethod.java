@@ -18,22 +18,11 @@ public enum HttpMethod {
     }
 
     public static HttpMethod getByName(String name) {
-        for (HttpMethod httpMethod : HttpMethod.values()) {
-            if (httpMethod.name().equalsIgnoreCase(name)) {
-                return httpMethod;
-            }
-        }
-        return null;
+        return EnumUtil.getByName(HttpMethod.class, name);
     }
 
     public static int findIndex(String name) {
-        HttpMethod[] httpMethods = HttpMethod.values();
-        for (int i = 0; i < httpMethods.length; i++) {
-            if (httpMethods[i].name().equalsIgnoreCase(name)) {
-                return i;
-            }
-        }
-        return 0;
+        return EnumUtil.findIndex(HttpMethod.class, name);
     }
 
 }

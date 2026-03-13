@@ -12,9 +12,17 @@ public enum ConditionType {
     STARTS_WITH("Starts with"),
     ENDS_WITH("Ends with"),
     CONTAINS("Contains"),
-    REGEX("Regex Match");
+    NOT_CONTAINS("Not Contains"),
+    NOT_STARTS_WITH("Not Starts With"),
+    EQUALS("Equals"),
+    REGEX("Regex Match"),
+    IS_NUMERIC("Is Numeric"),
+    GREATER_THAN("Greater Than"),
+    LESS_THAN("Less Than"),
+    BETWEEN("Between (min,max)"),
+    LENGTH_EQUALS("Length Equals");
 
-    String friendlyName;
+    final String friendlyName;
 
 
     public static String[] asArray() {
@@ -26,21 +34,10 @@ public enum ConditionType {
     }
 
     public static ConditionType getByName(String name) {
-        for (ConditionType event : ConditionType.values()) {
-            if (event.name().equalsIgnoreCase(name)) {
-                return event;
-            }
-        }
-        return null;
+        return EnumUtil.getByName(ConditionType.class, name);
     }
 
     public static int findIndex(String name) {
-        ConditionType[] event = ConditionType.values();
-        for (int i = 0; i < event.length; i++) {
-            if (event[i].name().equalsIgnoreCase(name)) {
-                return i;
-            }
-        }
-        return 0;
+        return EnumUtil.findIndex(ConditionType.class, name);
     }
 }

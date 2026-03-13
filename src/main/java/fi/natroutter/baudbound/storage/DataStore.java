@@ -43,9 +43,6 @@ public class DataStore {
         @AllArgsConstructor
         public static class Generic {
 
-            @SerializedName("start_with_os")
-            private boolean startWithOS;
-
             @SerializedName("start_hidden")
             private boolean startHidden;
 
@@ -62,11 +59,11 @@ public class DataStore {
             @SerializedName("run_first_only")
             private boolean runFirstOnly;
 
-            @SerializedName("use_default_event")
-            private boolean useDefaultEvent;
+            @SerializedName("condition_events_first")
+            private boolean conditionEventsFirst;
 
-            @SerializedName("default_event")
-            private String defaultEvent;
+            @SerializedName("skip_empty_conditions")
+            private boolean skipEmptyConditions;
 
         }
 
@@ -121,6 +118,9 @@ public class DataStore {
 
             @SerializedName("value")
             private String value;
+
+            @SerializedName("case_sensitive")
+            private boolean caseSensitive;
 
         }
 
@@ -209,14 +209,15 @@ public class DataStore {
         String getName();
     }
 
+    private static final Gson GSON = new Gson();
+    private static final Gson GSON_PRETTY = new GsonBuilder().setPrettyPrinting().create();
+
     public static DataStore fromJson(String json) {
-        Gson gson = new Gson();
-        return gson.fromJson(json, DataStore.class);
+        return GSON.fromJson(json, DataStore.class);
     }
 
     public String toJson() {
-        Gson gson = new GsonBuilder().setPrettyPrinting().create();
-        return gson.toJson(this);
+        return GSON_PRETTY.toJson(this);
     }
 
 }

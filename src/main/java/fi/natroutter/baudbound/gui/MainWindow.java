@@ -20,8 +20,8 @@ import java.util.List;
 
 public class MainWindow {
 
-    private StorageProvider storage = BaudBound.getStorageProvider();
-    private SerialHandler serialHandler = BaudBound.getSerialHandler();
+    private final StorageProvider storage = BaudBound.getStorageProvider();
+    private final SerialHandler serialHandler = BaudBound.getSerialHandler();
 
 
     private final ImInt selectedEvent = new ImInt(0);
@@ -67,7 +67,7 @@ public class MainWindow {
                     ()-> {
                         DataStore.Event orig = events.get(selectedEvent.get());
                         List<DataStore.Event.Condition> condCopy = orig.getConditions() == null ? new java.util.ArrayList<>() :
-                                orig.getConditions().stream().map(c -> new DataStore.Event.Condition(c.getType(), c.getValue())).toList();
+                                orig.getConditions().stream().map(c -> new DataStore.Event.Condition(c.getType(), c.getValue(), c.isCaseSensitive())).toList();
                         List<DataStore.Event.Action> actCopy = orig.getActions() == null ? new java.util.ArrayList<>() :
                                 orig.getActions().stream().map(a -> new DataStore.Event.Action(a.getType(), a.getValue())).toList();
                         events.add(new DataStore.Event(orig.getName() + " (copy)", condCopy, actCopy));
@@ -78,6 +78,18 @@ public class MainWindow {
                         if (selectedEvent.get() >= events.size()) {
                             selectedEvent.set(Math.max(0, events.size() - 1));
                         }
+                        storage.save();
+                    },
+                    ()-> {
+                        int i = selectedEvent.get();
+                        java.util.Collections.swap(events, i, i - 1);
+                        selectedEvent.set(i - 1);
+                        storage.save();
+                    },
+                    ()-> {
+                        int i = selectedEvent.get();
+                        java.util.Collections.swap(events, i, i + 1);
+                        selectedEvent.set(i + 1);
                         storage.save();
                     },
                     ()->{}

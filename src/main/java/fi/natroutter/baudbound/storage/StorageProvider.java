@@ -9,8 +9,8 @@ import java.nio.file.Path;
 
 public class StorageProvider {
 
-    private FoxLogger logger = BaudBound.getLogger();
-    private FileManager manager;
+    private final FoxLogger logger = BaudBound.getLogger();
+    private final FileManager manager;
 
     private DataStore data;
 
@@ -21,10 +21,8 @@ public class StorageProvider {
                 .setExportResource(true)
                 .setLogger(logger)
                 .setResourceFile("storage.json")
-                .onFileCreation(()->{
-                   logger.info("Storage file initialized");
-                })
-                .onInitialized(e-> {
+                .onFileCreation(() -> logger.info("Storage file initialized"))
+                .onInitialized(e -> {
                     if (e.success() && !e.content().isEmpty()) {
                         data = DataStore.fromJson(e.content());
                     }
@@ -34,23 +32,20 @@ public class StorageProvider {
 
     public DataStore getData() {
         if (data == null) {
-            logger.error("Datastore can not be accessed before its initialized!");
-            System.exit(0);
+            throw new IllegalStateException("DataStore accessed before initialization");
         }
         return data;
     }
 
-
     public void reload() {
-        logger.info("Datastore Reloaded!");
+        logger.info("Datastore reloaded");
         manager.reload();
     }
 
     public void save() {
         if (data != null) {
-            logger.info("Datastore Saved!");
+            logger.info("Datastore saved");
             manager.save(data.toJson());
         }
     }
-
 }

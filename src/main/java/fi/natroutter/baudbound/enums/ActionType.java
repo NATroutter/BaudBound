@@ -12,35 +12,21 @@ public enum ActionType {
     CALL_WEBHOOK("Call Webhook"),
     OPEN_PROGRAM("Open Program"),
     OPEN_URL("Open URL"),
-    TYPE_TEXT("Type Text");
+    TYPE_TEXT("Type Text"),
+    COPY_TO_CLIPBOARD("Copy to Clipboard"),
+    SHOW_NOTIFICATION("Show Notification"),
+    WRITE_TO_FILE("Write to File"),
+    APPEND_TO_FILE("Append to File"),
+    PLAY_SOUND("Play Sound");
 
-    private String friendlyName;
-
-    public static String[] asArray() {
-        return Arrays.stream(ActionType.values()).map(ActionType::name).toArray(String[]::new);
-    }
+    private final String friendlyName;
 
     public static String[] asFriendlyArray() {
         return Arrays.stream(ActionType.values()).map(ActionType::getFriendlyName).toArray(String[]::new);
     }
 
     public static ActionType getByName(String name) {
-        for (ActionType event : ActionType.values()) {
-            if (event.name().equalsIgnoreCase(name)) {
-                return event;
-            }
-        }
-        return null;
-    }
-
-    public static int findIndex(String name) {
-        ActionType[] event = ActionType.values();
-        for (int i = 0; i < event.length; i++) {
-            if (event[i].name().equalsIgnoreCase(name)) {
-                return i;
-            }
-        }
-        return 0;
+        return EnumUtil.getByName(ActionType.class, name);
     }
 
 }

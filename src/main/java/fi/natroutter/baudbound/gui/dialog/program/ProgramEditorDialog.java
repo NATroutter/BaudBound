@@ -2,44 +2,39 @@ package fi.natroutter.baudbound.gui.dialog.program;
 
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.DialogMode;
+import fi.natroutter.baudbound.gui.dialog.BaseDialog;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import fi.natroutter.foxlib.logger.FoxLogger;
 import imgui.ImGui;
 import imgui.ImVec2;
-import imgui.flag.ImGuiCond;
-import imgui.flag.ImGuiWindowFlags;
+import imgui.flag.ImGuiChildFlags;
 import imgui.type.ImBoolean;
 import imgui.type.ImString;
 
 import java.util.List;
 
-public class ProgramEditorDialog {
+public class ProgramEditorDialog extends BaseDialog {
 
-    private FoxLogger logger = BaudBound.getLogger();
-    private StorageProvider storage = BaudBound.getStorageProvider();
+    private final FoxLogger logger = BaudBound.getLogger();
+    private final StorageProvider storage = BaudBound.getStorageProvider();
 
-    private final ImString fieldName      = new ImString();
-    private final ImString fieldPath      = new ImString(512);
-    private final ImString fieldArguments = new ImString(512);
+    private final ImString  fieldName      = new ImString();
+    private final ImString  fieldPath      = new ImString(512);
+    private final ImString  fieldArguments = new ImString(512);
     private final ImBoolean fieldRunAsAdmin = new ImBoolean(false);
 
     private DialogMode mode = DialogMode.CREATE;
-    private boolean open = false;
-    private final ImBoolean modalOpen = new ImBoolean(false);
     private DataStore.Actions.Program editing = null;
 
-    private void reopen() {
-        this.open = true;
-    }
-
+    @Override
     public void show() {
         show(DialogMode.CREATE, null);
     }
 
     public void show(DialogMode dialogMode, DataStore.Actions.Program program) {
-        this.open = true;
         this.mode = dialogMode;
 
         if (dialogMode == DialogMode.EDIT && program != null) {
@@ -55,30 +50,32 @@ public class ProgramEditorDialog {
             fieldArguments.set("");
             fieldRunAsAdmin.set(false);
         }
+
+        requestOpen();
     }
 
+    @Override
+    protected void onClose() {
+        BaudBound.getProgramsDialog().show();
+    }
+
+    @Override
     public void render() {
-        String popupTitle = mode.getType() + " Program";
+        String title = mode.getType() + " Program";
+        if (beginModal(title)) {
 
-        if (open) {
-            ImGui.openPopup(popupTitle);
-            modalOpen.set(true);
-            open = false;
-        }
+            if (ImGui.beginChild("##instructions_wrap", ImGui.getContentRegionAvailX(), 0, ImGuiChildFlags.AutoResizeY)) {
+                if (ImGui.collapsingHeader("Instructions")) {
+                    ImGui.indent(8);
+                    ImGui.spacing();
+                    GuiHelper.instructions("fields (Path, Arguments)");
+                    ImGui.spacing();
+                    ImGui.unindent(8);
+                }
+            }
+            ImGui.endChild();
+            ImGui.spacing();
 
-        ImGui.setNextWindowPos(
-                ImGui.getIO().getDisplaySizeX() / 2,
-                ImGui.getIO().getDisplaySizeY() / 2,
-                ImGuiCond.Always,
-                0.5f, 0.5f
-        );
-        ImGui.setNextWindowSizeConstraints(
-                ImGui.getIO().getDisplaySizeX() * 0.9f, 0,
-                ImGui.getIO().getDisplaySizeX() * 0.9f, Float.MAX_VALUE
-        );
-
-        boolean wasOpen = ImGui.isPopupOpen(popupTitle);
-        if (ImGui.beginPopupModal(popupTitle, modalOpen, ImGuiWindowFlags.AlwaysAutoResize)) {
 
             ImGui.text("Name");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
@@ -94,7 +91,6 @@ public class ProgramEditorDialog {
 
             ImGui.checkbox("Run as Administrator", fieldRunAsAdmin);
 
-            // Buttons
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
@@ -102,10 +98,7 @@ public class ProgramEditorDialog {
                 save();
             }
 
-            ImGui.endPopup();
-        } else if (wasOpen && !modalOpen.get()) {
-            modalOpen.set(true);
-            BaudBound.getProgramsDialog().show();
+            endModal();
         }
     }
 
@@ -114,20 +107,17 @@ public class ProgramEditorDialog {
         String path = fieldPath.get().trim();
 
         if (name.isEmpty()) {
-            BaudBound.getMessageDialog().show("Error", "Name is required.", new DialogButton("OK", this::reopen));
+            BaudBound.getMessageDialog().show("Error", "Name is required.", new DialogButton("OK", this::requestOpen));
             return;
         }
         if (path.isEmpty()) {
-            BaudBound.getMessageDialog().show("Error", "Path is required.", new DialogButton("OK", this::reopen));
+            BaudBound.getMessageDialog().show("Error", "Path is required.", new DialogButton("OK", this::requestOpen));
             return;
         }
 
         List<DataStore.Actions.Program> programs = storage.getData().getActions().getPrograms();
-        boolean nameExists = programs.stream().anyMatch(p -> p != editing && p.getName().equalsIgnoreCase(name));
-        if (nameExists) {
-            BaudBound.getMessageDialog().show("Error",
-                    "A program named \"" + name + "\" already exists.",
-                    new DialogButton("OK", this::reopen));
+        if (programs.stream().anyMatch(p -> p != editing && p.getName().equalsIgnoreCase(name))) {
+            BaudBound.getMessageDialog().show("Error", "A program named \"" + name + "\" already exists.", new DialogButton("OK", this::requestOpen));
             return;
         }
 
