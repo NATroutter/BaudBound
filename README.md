@@ -62,6 +62,13 @@ mvn package
 java -jar target/baudbound-1.0.0.jar
 ```
 
+## Development builds
+
+Development builds are available via Jenkins and the Maven repository:
+
+- **Jenkins:** https://jenkins.nat.gg/job/general/job/BaudBound/
+- **Maven repository:** https://repo.nat.gg/
+
 ## Quick start
 
 1. Open **Settings** and configure your serial device (port, baud rate, etc.)
