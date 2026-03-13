@@ -10,12 +10,15 @@ import fi.natroutter.baudbound.enums.FlowControl;
 import fi.natroutter.baudbound.enums.Parity;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
+import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
+import fi.natroutter.baudbound.system.ShortcutManager;
 import fi.natroutter.baudbound.system.StartupManager;
 import imgui.ImGui;
 import imgui.ImVec2;
 import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 
+import javax.swing.*;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -47,6 +50,7 @@ public class SettingsDialog extends BaseDialog {
 
     private List<SerialPort> devices;
     private String[] portNames;
+    private volatile boolean creatingShortcut = false;
 
     public SettingsDialog() {
         this.devices = serialHandler.getDevices();
@@ -131,6 +135,17 @@ public class SettingsDialog extends BaseDialog {
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
             ImGui.combo("##flowcontrol", optionDeviceFlowControl, FlowControl.asArray());
 
+            ImGui.separatorText("Utilities");
+
+            ImGui.beginDisabled(creatingShortcut);
+            if (ImGui.button(creatingShortcut ? "Selecting folder..." : "Create Shortcut...",
+                    new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
+                openShortcutDialog();
+            }
+            ImGui.endDisabled();
+            GuiHelper.toolTip("Create a shortcut to BaudBound in a folder of your choice.\n" +
+                    "Opens in the startup folder by default.");
+
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
@@ -141,6 +156,49 @@ public class SettingsDialog extends BaseDialog {
 
             endModal();
         }
+    }
+
+    private void openShortcutDialog() {
+        creatingShortcut = true;
+        Thread.ofVirtual().start(() -> {
+            try {
+                String[] selectedFolder = {null};
+                SwingUtilities.invokeAndWait(() -> {
+                    // Use an always-on-top invisible frame as parent so the dialog
+                    // appears in front of the GLFW window.
+                    JFrame parent = new JFrame();
+                    parent.setUndecorated(true);
+                    parent.setAlwaysOnTop(true);
+                    parent.setVisible(true);
+                    parent.setLocationRelativeTo(null);
+
+                    JFileChooser chooser = new JFileChooser(ShortcutManager.defaultFolderPath());
+                    chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                    chooser.setDialogTitle("Select Shortcut Location");
+                    if (chooser.showOpenDialog(parent) == JFileChooser.APPROVE_OPTION) {
+                        selectedFolder[0] = chooser.getSelectedFile().getAbsolutePath();
+                    }
+                    parent.dispose();
+                });
+
+                if (selectedFolder[0] == null) {
+                    creatingShortcut = false;
+                    return;
+                }
+
+                ShortcutManager.createShortcut(selectedFolder[0]);
+                creatingShortcut = false;
+                BaudBound.getMessageDialog().show("Shortcut Created",
+                        "Shortcut created successfully in:\n" + selectedFolder[0],
+                        new DialogButton("OK", () -> {}));
+            } catch (Exception e) {
+                creatingShortcut = false;
+                logger.error("Failed to create shortcut: " + e.getMessage());
+                BaudBound.getMessageDialog().show("Error",
+                        "Failed to create shortcut:\n" + e.getMessage(),
+                        new DialogButton("OK", () -> {}));
+            }
+        });
     }
 
     private void load() {

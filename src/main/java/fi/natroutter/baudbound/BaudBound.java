@@ -16,6 +16,7 @@ import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.serial.SerialHandler;
 import fi.natroutter.baudbound.storage.StorageProvider;
+import fi.natroutter.baudbound.system.SingleInstanceManager;
 import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.app.Application;
@@ -66,11 +67,6 @@ public class BaudBound extends Application {
 
     private static TrayIcon trayIcon = null;
 
-    public static void showNotification(String title, String message, TrayIcon.MessageType type) {
-        if (trayIcon != null) {
-            trayIcon.displayMessage(title, message, type);
-        }
-    }
     private volatile boolean pendingShow = false;
     private volatile boolean pendingExit = false;
     private MenuItem connectMenuItem = null;
@@ -84,6 +80,11 @@ public class BaudBound extends Application {
                 .setSaveIntervalSeconds(300)
                 .setLoggerName(APP_NAME)
                 .build();
+
+        BaudBound app = new BaudBound();
+        if (!SingleInstanceManager.tryAcquire(app::requestShow)) {
+            return;
+        }
 
         storageProvider = new StorageProvider();
         eventHandler = new EventHandler();
@@ -99,9 +100,19 @@ public class BaudBound extends Application {
         eventEditorDialog = new EventEditorDialog();
         mainWindow = new MainWindow();
 
-        launch(new BaudBound());
+        launch(app);
         System.exit(0);
 
+    }
+
+    void requestShow() {
+        pendingShow = true;
+    }
+
+    public static void showNotification(String title, String message, TrayIcon.MessageType type) {
+        if (trayIcon != null) {
+            trayIcon.displayMessage(title, message, type);
+        }
     }
 
     @Override
@@ -189,6 +200,7 @@ public class BaudBound extends Application {
         if (trayIcon != null) {
             SystemTray.getSystemTray().remove(trayIcon);
         }
+        SingleInstanceManager.release();
         super.dispose();
     }
 

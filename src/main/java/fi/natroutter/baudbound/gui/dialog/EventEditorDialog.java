@@ -273,7 +273,7 @@ public class EventEditorDialog extends BaseDialog {
                 ImGui.endDisabled();
 
                 ImGui.tableSetColumnIndex(5);
-                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON[0], GuiTheme.COLOR_DELETE_BUTTON[1], GuiTheme.COLOR_DELETE_BUTTON[2], GuiTheme.COLOR_DELETE_BUTTON[3]);
+                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON);
                 if (ImGui.button("X##cr" + i)) removeIndex = i;
                 ImGui.popStyleColor();
             }
@@ -362,7 +362,7 @@ public class EventEditorDialog extends BaseDialog {
                 ImGui.endDisabled();
 
                 ImGui.tableSetColumnIndex(4);
-                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON[0], GuiTheme.COLOR_DELETE_BUTTON[1], GuiTheme.COLOR_DELETE_BUTTON[2], GuiTheme.COLOR_DELETE_BUTTON[3]);
+                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON);
                 if (ImGui.button("X##ar" + i)) removeIndex = i;
                 ImGui.popStyleColor();
             }

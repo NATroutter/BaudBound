@@ -94,7 +94,7 @@ public class MainWindow {
 
             boolean connected = serialHandler.getStatus() == ConnectionStatus.CONNECTED;
             if (connected) {
-                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON[0], GuiTheme.COLOR_DELETE_BUTTON[1], GuiTheme.COLOR_DELETE_BUTTON[2], GuiTheme.COLOR_DELETE_BUTTON[3]);
+                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON);
             }
             if (ImGui.button(connected ? "Disconnect" : "Connect", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
                 if (connected) {
