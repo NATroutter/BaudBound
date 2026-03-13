@@ -22,6 +22,8 @@ public class HttpHandler {
 
             if (webhook.getHeaders() != null) {
                 for (DataStore.Actions.Webhook.Header header : webhook.getHeaders()) {
+                    // Key must be non-blank (HTTP spec requires a valid field name);
+                    // value may be blank (e.g. "X-Empty-Header: ").
                     if (header.getKey() != null && !header.getKey().isBlank()) {
                         connection.header(header.getKey(), header.getValue() != null ? header.getValue() : "");
                     }

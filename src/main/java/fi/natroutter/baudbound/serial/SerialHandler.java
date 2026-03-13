@@ -115,23 +115,14 @@ public class SerialHandler {
 
         while (status == ConnectionStatus.CONNECTED && !Thread.currentThread().isInterrupted()) {
             try {
-                // Physical disconnect: port reports itself closed or bytesAvailable returns -1
                 if (!port.isOpen()) {
-                    if (!shuttingDown && status == ConnectionStatus.CONNECTED) {
-                        logger.error("Serial port closed unexpectedly — device disconnected.");
-                        status = ConnectionStatus.NO_DEVICE;
-                    }
+                    handleUnexpectedDisconnect("Serial port closed unexpectedly — device disconnected.");
                     break;
                 }
 
                 int available = port.bytesAvailable();
-
                 if (available < 0) {
-                    // -1 means port error / physical disconnection
-                    if (!shuttingDown && status == ConnectionStatus.CONNECTED) {
-                        logger.error("Serial port read failed — device disconnected.");
-                        status = ConnectionStatus.NO_DEVICE;
-                    }
+                    handleUnexpectedDisconnect("Serial port read failed — device disconnected.");
                     break;
                 }
 
@@ -143,22 +134,14 @@ public class SerialHandler {
                 int bytesRead = port.readBytes(buf, Math.min(available, buf.length));
                 if (bytesRead <= 0) continue;
 
-                // Normalise all line endings (\r\n, \r, \n) to \n so the
-                // split logic works regardless of what the device sends.
-                String chunk = new String(buf, 0, bytesRead)
-                        .replace("\r\n", "\n")
-                        .replace("\r", "\n");
-                lineBuffer.append(chunk);
+                lineBuffer.append(normalizeLineEndings(new String(buf, 0, bytesRead)));
 
-                // Process all complete lines
                 int newlineIndex;
                 while ((newlineIndex = lineBuffer.indexOf("\n")) >= 0) {
                     String line = lineBuffer.substring(0, newlineIndex).strip();
                     lineBuffer.delete(0, newlineIndex + 1);
-
                     if (!line.isEmpty()) {
-                        logger.info("Serial input: " + line);
-                        eventHandler.process(line);
+                        processCompleteLine(line);
                     }
                 }
             } catch (Exception e) {
@@ -170,19 +153,38 @@ public class SerialHandler {
             }
         }
 
-        // Always clean up the port when the loop exits for any reason
-        if (port != null && port.isOpen()) {
-            port.closePort();
-        }
-        port = null;
-        listenerThread = null;
+        cleanupPort();
 
-        // Auto-reconnect if the disconnect was unexpected and the setting is enabled
         if (!shuttingDown
                 && status == ConnectionStatus.NO_DEVICE
                 && storage.getData().getSettings().getGeneric().isAutoConnect()) {
             startReconnectLoop();
         }
+    }
+
+    /** Normalizes all line endings (\r\n, \r, \n) to \n so line splitting works regardless of device output. */
+    private String normalizeLineEndings(String raw) {
+        return raw.replace("\r\n", "\n").replace("\r", "\n");
+    }
+
+    private void processCompleteLine(String line) {
+        logger.info("Serial input: " + line);
+        eventHandler.process(line);
+    }
+
+    private void handleUnexpectedDisconnect(String message) {
+        if (!shuttingDown && status == ConnectionStatus.CONNECTED) {
+            logger.error(message);
+            status = ConnectionStatus.NO_DEVICE;
+        }
+    }
+
+    private void cleanupPort() {
+        if (port != null && port.isOpen()) {
+            port.closePort();
+        }
+        port = null;
+        listenerThread = null;
     }
 
     private void startReconnectLoop() {

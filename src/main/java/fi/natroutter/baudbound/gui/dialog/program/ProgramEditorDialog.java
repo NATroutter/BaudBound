@@ -4,6 +4,7 @@ import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.DialogMode;
 import fi.natroutter.baudbound.gui.dialog.BaseDialog;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
+import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
@@ -94,7 +95,7 @@ public class ProgramEditorDialog extends BaseDialog {
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
-            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), 20))) {
+            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
                 save();
             }
 

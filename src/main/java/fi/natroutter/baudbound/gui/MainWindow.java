@@ -1,6 +1,7 @@
 package fi.natroutter.baudbound.gui;
 
 import fi.natroutter.baudbound.enums.ConnectionStatus;
+import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.serial.SerialHandler;
 
@@ -16,6 +17,7 @@ import imgui.flag.ImGuiStyleVar;
 import imgui.flag.ImGuiWindowFlags;
 import imgui.type.ImInt;
 
+import java.util.Collections;
 import java.util.List;
 
 public class MainWindow {
@@ -53,24 +55,17 @@ public class MainWindow {
 
             float itemSpacing = ImGui.getStyle().getItemSpacingY();
             float lineHeight = ImGui.getTextLineHeightWithSpacing();
-            // spacing + button(20) + spacing + text_line + spacing
-            float bottomReserve = itemSpacing * 4 + 20 + lineHeight;
+            // spacing + button + spacing + text_line + spacing
+            float bottomReserve = itemSpacing * 4 + GuiTheme.BUTTON_HEIGHT + lineHeight;
 
             GuiHelper.listAndEditorButtons(
                     "##events", events, selectedEvent, true, bottomReserve,
+                    ()-> BaudBound.getEventEditorDialog().show(),
+                    ()-> BaudBound.getEventEditorDialog().show(DialogMode.EDIT, events.get(selectedEvent.get())),
                     ()-> {
-                        BaudBound.getEventEditorDialog().show();
-                    },
-                    ()-> {
-                        BaudBound.getEventEditorDialog().show(DialogMode.EDIT, events.get(selectedEvent.get()));
-                    },
-                    ()-> {
-                        DataStore.Event orig = events.get(selectedEvent.get());
-                        List<DataStore.Event.Condition> condCopy = orig.getConditions() == null ? new java.util.ArrayList<>() :
-                                orig.getConditions().stream().map(c -> new DataStore.Event.Condition(c.getType(), c.getValue(), c.isCaseSensitive())).toList();
-                        List<DataStore.Event.Action> actCopy = orig.getActions() == null ? new java.util.ArrayList<>() :
-                                orig.getActions().stream().map(a -> new DataStore.Event.Action(a.getType(), a.getValue())).toList();
-                        events.add(new DataStore.Event(orig.getName() + " (copy)", condCopy, actCopy));
+                        DataStore.Event copy = events.get(selectedEvent.get()).deepCopy();
+                        copy.setName(copy.getName() + " (copy)");
+                        events.add(copy);
                         storage.save();
                     },
                     ()-> {
@@ -82,13 +77,13 @@ public class MainWindow {
                     },
                     ()-> {
                         int i = selectedEvent.get();
-                        java.util.Collections.swap(events, i, i - 1);
+                        Collections.swap(events, i, i - 1);
                         selectedEvent.set(i - 1);
                         storage.save();
                     },
                     ()-> {
                         int i = selectedEvent.get();
-                        java.util.Collections.swap(events, i, i + 1);
+                        Collections.swap(events, i, i + 1);
                         selectedEvent.set(i + 1);
                         storage.save();
                     },
@@ -99,9 +94,9 @@ public class MainWindow {
 
             boolean connected = serialHandler.getStatus() == ConnectionStatus.CONNECTED;
             if (connected) {
-                ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
+                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON[0], GuiTheme.COLOR_DELETE_BUTTON[1], GuiTheme.COLOR_DELETE_BUTTON[2], GuiTheme.COLOR_DELETE_BUTTON[3]);
             }
-            if (ImGui.button(connected ? "Disconnect" : "Connect", new ImVec2(ImGui.getContentRegionAvailX(), 20))) {
+            if (ImGui.button(connected ? "Disconnect" : "Connect", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
                 if (connected) {
                     serialHandler.disconnect();
                 } else {

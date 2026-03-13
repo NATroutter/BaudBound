@@ -9,7 +9,6 @@ import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
 import imgui.type.ImInt;
 
-import java.util.ArrayList;
 import java.util.List;
 
 
@@ -36,10 +35,9 @@ public class WebhooksDialog extends BaseDialog {
                         BaudBound.getWebhookEditorDialog().show(DialogMode.EDIT, items.get(selected.get()));
                     },
                     () -> {
-                        DataStore.Actions.Webhook orig = items.get(selected.get());
-                        List<DataStore.Actions.Webhook.Header> headerCopy = orig.getHeaders() == null ? new ArrayList<>() :
-                                orig.getHeaders().stream().map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), h.getValue())).toList();
-                        items.add(new DataStore.Actions.Webhook(orig.getName() + " (copy)", orig.getUrl(), orig.getMethod(), headerCopy, orig.getBody()));
+                        DataStore.Actions.Webhook copy = items.get(selected.get()).deepCopy();
+                        copy.setName(copy.getName() + " (copy)");
+                        items.add(copy);
                         storage.save();
                     },
                     () -> {

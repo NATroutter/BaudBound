@@ -37,11 +37,6 @@ public class StorageProvider {
         return data;
     }
 
-    public void reload() {
-        logger.info("Datastore reloaded");
-        manager.reload();
-    }
-
     public void save() {
         if (data != null) {
             logger.info("Datastore saved");

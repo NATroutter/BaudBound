@@ -124,6 +124,14 @@ public class DataStore {
 
         }
 
+        public Event deepCopy() {
+            List<Condition> conditionsCopy = conditions == null ? new ArrayList<>() :
+                    conditions.stream().map(c -> new Condition(c.getType(), c.getValue(), c.isCaseSensitive())).toList();
+            List<Action> actionsCopy = actions == null ? new ArrayList<>() :
+                    actions.stream().map(a -> new Action(a.getType(), a.getValue())).toList();
+            return new Event(name, conditionsCopy, actionsCopy);
+        }
+
         @Data
         @NoArgsConstructor
         @AllArgsConstructor
@@ -170,6 +178,12 @@ public class DataStore {
             @SerializedName("body")
             private String body;
 
+            public Webhook deepCopy() {
+                List<Header> headersCopy = headers == null ? new ArrayList<>() :
+                        headers.stream().map(h -> new Header(h.getKey(), h.getValue())).toList();
+                return new Webhook(name, url, method, headersCopy, body);
+            }
+
             @Data
             @NoArgsConstructor
             @AllArgsConstructor
@@ -188,6 +202,11 @@ public class DataStore {
         @NoArgsConstructor
         @AllArgsConstructor
         public static class Program implements Named {
+
+            public Program deepCopy() {
+                return new Program(name, path, arguments, runAsAdmin);
+            }
+
 
             @SerializedName("name")
             private String name;

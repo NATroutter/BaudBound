@@ -113,7 +113,7 @@ public class EventHandler {
                         case SHOW_NOTIFICATION -> showNotification(value, input);
                         case WRITE_TO_FILE     -> writeToFile(value, input);
                         case APPEND_TO_FILE    -> appendToFile(value, input);
-                        case PLAY_SOUND        -> playSound(value, input);
+                        case PLAY_SOUND        -> playSound(value);
                     }
                 } catch (Exception e) {
                     logger.error("Action [" + type + "] failed for event \"" + event.getName() + "\": " + e.getMessage());
@@ -258,7 +258,7 @@ public class EventHandler {
         logger.info("Appended to file: " + filePath);
     }
 
-    private void playSound(String filePath, String input) throws Exception {
+    private void playSound(String filePath) throws Exception {
         if (filePath == null || filePath.isBlank()) {
             Toolkit.getDefaultToolkit().beep();
             return;

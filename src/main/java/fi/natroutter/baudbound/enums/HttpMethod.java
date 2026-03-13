@@ -17,10 +17,6 @@ public enum HttpMethod {
         return Arrays.stream(HttpMethod.values()).map(HttpMethod::name).toArray(String[]::new);
     }
 
-    public static HttpMethod getByName(String name) {
-        return EnumUtil.getByName(HttpMethod.class, name);
-    }
-
     public static int findIndex(String name) {
         return EnumUtil.findIndex(HttpMethod.class, name);
     }

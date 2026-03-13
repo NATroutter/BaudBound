@@ -6,6 +6,7 @@ import fi.natroutter.baudbound.gui.dialog.BaseDialog;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
 import fi.natroutter.baudbound.enums.DialogMode;
 import fi.natroutter.baudbound.enums.HttpMethod;
+import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.http.HttpHandler;
 import fi.natroutter.baudbound.storage.DataStore;
@@ -128,12 +129,12 @@ public class WebhookEditorDialog extends BaseDialog {
 
             float buttonWidth = (ImGui.getContentRegionAvailX() - ImGui.getStyle().getItemSpacingX()) / 2;
             ImGui.beginDisabled(testing);
-            if (ImGui.button(testing ? "Testing..." : "Test Webhook", new ImVec2(buttonWidth, 20))) {
+            if (ImGui.button(testing ? "Testing..." : "Test Webhook", new ImVec2(buttonWidth, GuiTheme.BUTTON_HEIGHT))) {
                 testWebhook();
             }
             ImGui.endDisabled();
             ImGui.sameLine();
-            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), 20))) {
+            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
                 save();
             }
 

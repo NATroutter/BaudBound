@@ -2,10 +2,17 @@ package fi.natroutter.baudbound.gui.theme;
 
 import imgui.ImGui;
 import imgui.ImGuiStyle;
+import imgui.ImVec4;
 import imgui.flag.ImGuiCol;
 import imgui.flag.ImGuiDir;
 
 public class GuiTheme {
+
+    /** Standard height for action buttons (Create, Save, Connect, etc.). */
+    public static final float BUTTON_HEIGHT = 20f;
+
+    /** Red color components (r, g, b, a) for destructive/delete buttons. */
+    public static final ImVec4 COLOR_DELETE_BUTTON = new ImVec4(0.6f, 0.1f, 0.1f, 1.0f);
 
 public static void applyDarkRuda() {
     // custom1 style from ImThemes

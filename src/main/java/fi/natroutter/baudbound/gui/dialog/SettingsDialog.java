@@ -4,6 +4,7 @@ import com.fazecast.jSerialComm.SerialPort;
 import fi.natroutter.baudbound.serial.SerialHandler;
 import fi.natroutter.foxlib.logger.FoxLogger;
 import fi.natroutter.baudbound.BaudBound;
+import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.enums.FlowControl;
 import fi.natroutter.baudbound.enums.Parity;
@@ -15,7 +16,10 @@ import imgui.ImVec2;
 import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.IntStream;
 
 
 public class SettingsDialog extends BaseDialog {
@@ -87,7 +91,7 @@ public class SettingsDialog extends BaseDialog {
 
             float refreshWidth = ImGui.calcTextSize("Refresh").x + ImGui.getStyle().getFramePaddingX() * 2;
             String longestPort = portNames != null ? getLongestString(portNames) : null;
-            float minComboWidth = longestPort != null ? ImGui.calcTextSize(longestPort).x + ImGui.getStyle().getFramePaddingX() * 2 + 20 : 150;
+            float minComboWidth = longestPort != null ? ImGui.calcTextSize(longestPort).x + ImGui.getStyle().getFramePaddingX() * 2 + GuiTheme.BUTTON_HEIGHT : 150;
             float comboWidth = Math.max(minComboWidth, ImGui.getContentRegionAvailX() - refreshWidth - ImGui.getStyle().getItemSpacingX());
 
             ImGui.beginDisabled(devices == null || devices.isEmpty());
@@ -98,7 +102,7 @@ public class SettingsDialog extends BaseDialog {
             ImGui.endDisabled();
 
             ImGui.sameLine();
-            if (ImGui.button("Refresh", new ImVec2(refreshWidth, 20))) {
+            if (ImGui.button("Refresh", new ImVec2(refreshWidth, GuiTheme.BUTTON_HEIGHT))) {
                 this.devices = serialHandler.getDevices();
             }
 
@@ -131,7 +135,7 @@ public class SettingsDialog extends BaseDialog {
             ImGui.separator();
             ImGui.spacing();
 
-            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), 20))) {
+            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
                 save();
             }
 
@@ -202,23 +206,21 @@ public class SettingsDialog extends BaseDialog {
     }
 
     private static int findIntIndex(String[] array, int value) {
-        for (int i = 0; i < array.length; i++) {
-            try { if (Integer.parseInt(array[i]) == value) return i; } catch (NumberFormatException ignored) {}
-        }
-        return 0;
+        return IntStream.range(0, array.length)
+                .filter(i -> { try { return Integer.parseInt(array[i]) == value; } catch (NumberFormatException e) { return false; } })
+                .findFirst().orElse(0);
     }
 
     private static <T extends Enum<T>> int findEnumIndex(T[] values, String name) {
         if (name == null) return 0;
-        for (int i = 0; i < values.length; i++) {
-            if (values[i].name().equals(name)) return i;
-        }
-        return 0;
+        return IntStream.range(0, values.length)
+                .filter(i -> values[i].name().equals(name))
+                .findFirst().orElse(0);
     }
 
     private static String getLongestString(String[] array) {
-        String longest = "";
-        for (String s : array) { if (s.length() > longest.length()) longest = s; }
-        return longest;
+        return Arrays.stream(array)
+                .max(Comparator.comparingInt(String::length))
+                .orElse("");
     }
 }

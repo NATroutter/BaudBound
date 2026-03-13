@@ -22,11 +22,24 @@ public enum ConditionType {
     BETWEEN("Between (min,max)"),
     LENGTH_EQUALS("Length Equals");
 
-    final String friendlyName;
+    private final String friendlyName;
 
+    /** Returns true if this condition type uses a value field. */
+    public boolean requiresValue() {
+        return this != IS_NUMERIC;
+    }
 
-    public static String[] asArray() {
-        return Arrays.stream(ConditionType.values()).map(ConditionType::name).toArray(String[]::new);
+    /**
+     * Returns true if this condition type supports the case-sensitivity toggle.
+     * Numeric and regex types handle their own case or don't operate on text.
+     */
+    public boolean supportsCaseSensitivity() {
+        return requiresValue()
+                && this != REGEX
+                && this != GREATER_THAN
+                && this != LESS_THAN
+                && this != BETWEEN
+                && this != LENGTH_EQUALS;
     }
 
     public static String[] asFriendlyArray() {

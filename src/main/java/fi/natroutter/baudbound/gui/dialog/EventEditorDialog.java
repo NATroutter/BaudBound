@@ -5,6 +5,7 @@ import fi.natroutter.baudbound.enums.ActionType;
 import fi.natroutter.baudbound.enums.ConditionType;
 import fi.natroutter.baudbound.enums.DialogMode;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
+import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
@@ -34,13 +35,13 @@ public class EventEditorDialog extends BaseDialog {
 
     // Conditions
     private final List<ImString[]> fieldConditions          = new ArrayList<>();
-    private final List<ImInt>      fieldConditionKeys       = new ArrayList<>();
-    private final List<ImBoolean>  fieldConditionCaseSens   = new ArrayList<>();
+    private final List<ImInt>      fieldConditionTypeIndices       = new ArrayList<>();
+    private final List<ImBoolean>  fieldConditionCaseSensitive   = new ArrayList<>();
 
     // Actions
     private final List<ImInt>    fieldActionTypes      = new ArrayList<>();
-    private final List<ImInt>    fieldActionComboValues = new ArrayList<>();
-    private final List<ImString> fieldActionTextValues  = new ArrayList<>();
+    private final List<ImInt>    fieldActionComboIndices = new ArrayList<>();
+    private final List<ImString> fieldActionValues  = new ArrayList<>();
 
     private String[] webhookNames = {};
     private String[] programNames = {};
@@ -61,11 +62,11 @@ public class EventEditorDialog extends BaseDialog {
                 .map(DataStore.Actions.Program::getName).toArray(String[]::new);
 
         fieldConditions.clear();
-        fieldConditionKeys.clear();
-        fieldConditionCaseSens.clear();
+        fieldConditionTypeIndices.clear();
+        fieldConditionCaseSensitive.clear();
         fieldActionTypes.clear();
-        fieldActionComboValues.clear();
-        fieldActionTextValues.clear();
+        fieldActionComboIndices.clear();
+        fieldActionValues.clear();
 
         if (dialogMode == DialogMode.EDIT && event != null) {
             this.editing = event;
@@ -76,8 +77,8 @@ public class EventEditorDialog extends BaseDialog {
                     ImString val = new ImString(256);
                     val.set(c.getValue() != null ? c.getValue() : "");
                     fieldConditions.add(new ImString[]{new ImString(128), val});
-                    fieldConditionKeys.add(new ImInt(ConditionType.findIndex(c.getType())));
-                    fieldConditionCaseSens.add(new ImBoolean(c.isCaseSensitive()));
+                    fieldConditionTypeIndices.add(new ImInt(ConditionType.findIndex(c.getType())));
+                    fieldConditionCaseSensitive.add(new ImBoolean(c.isCaseSensitive()));
                 }
             }
 
@@ -104,8 +105,8 @@ public class EventEditorDialog extends BaseDialog {
                              COPY_TO_CLIPBOARD, SHOW_NOTIFICATION,
                              WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> textVal.set(a.getValue() != null ? a.getValue() : "");
                     }
-                    fieldActionComboValues.add(comboVal);
-                    fieldActionTextValues.add(textVal);
+                    fieldActionComboIndices.add(comboVal);
+                    fieldActionValues.add(textVal);
                 }
             }
         } else {
@@ -149,8 +150,8 @@ public class EventEditorDialog extends BaseDialog {
             ImGui.spacing();
             if (ImGui.button("Add Condition", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
                 fieldConditions.add(new ImString[]{new ImString(128), new ImString(256)});
-                fieldConditionKeys.add(new ImInt(0));
-                fieldConditionCaseSens.add(new ImBoolean(false));
+                fieldConditionTypeIndices.add(new ImInt(0));
+                fieldConditionCaseSensitive.add(new ImBoolean(false));
             }
 
             ImGui.spacing();
@@ -167,14 +168,14 @@ public class EventEditorDialog extends BaseDialog {
             ImGui.spacing();
             if (ImGui.button("Add Action", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
                 fieldActionTypes.add(new ImInt(0));
-                fieldActionComboValues.add(new ImInt(0));
-                fieldActionTextValues.add(new ImString(512));
+                fieldActionComboIndices.add(new ImInt(0));
+                fieldActionValues.add(new ImString(512));
             }
 
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
-            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), 20))) {
+            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
                 save();
             }
 
@@ -238,16 +239,14 @@ public class EventEditorDialog extends BaseDialog {
 
                 ImGui.tableSetColumnIndex(0);
                 ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                ImGui.combo("##ctype" + i, fieldConditionKeys.get(i), ConditionType.asFriendlyArray());
+                ImGui.combo("##ctype" + i, fieldConditionTypeIndices.get(i), ConditionType.asFriendlyArray());
 
-                ConditionType condType = ConditionType.values()[fieldConditionKeys.get(i).get()];
-                boolean noValue = condType == ConditionType.IS_NUMERIC;
-                boolean noCase  = noValue || condType == ConditionType.REGEX
-                        || condType == ConditionType.GREATER_THAN || condType == ConditionType.LESS_THAN
-                        || condType == ConditionType.BETWEEN       || condType == ConditionType.LENGTH_EQUALS;
+                ConditionType condType = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
+                boolean noValue = !condType.requiresValue();
+                boolean noCase  = !condType.supportsCaseSensitivity();
                 if (noValue) {
                     fieldConditions.get(i)[1].set("");
-                    fieldConditionCaseSens.get(i).set(false);
+                    fieldConditionCaseSensitive.get(i).set(false);
                 }
 
                 ImGui.tableSetColumnIndex(1);
@@ -260,7 +259,7 @@ public class EventEditorDialog extends BaseDialog {
                 ImGui.beginDisabled(noCase);
                 float checkboxSize = ImGui.getFrameHeight();
                 ImGui.setCursorPosX(ImGui.getCursorPosX() + (ImGui.getContentRegionAvailX() - checkboxSize) / 2);
-                ImGui.checkbox("##ccs" + i, fieldConditionCaseSens.get(i));
+                ImGui.checkbox("##ccs" + i, fieldConditionCaseSensitive.get(i));
                 ImGui.endDisabled();
 
                 ImGui.tableSetColumnIndex(3);
@@ -274,7 +273,7 @@ public class EventEditorDialog extends BaseDialog {
                 ImGui.endDisabled();
 
                 ImGui.tableSetColumnIndex(5);
-                ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
+                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON[0], GuiTheme.COLOR_DELETE_BUTTON[1], GuiTheme.COLOR_DELETE_BUTTON[2], GuiTheme.COLOR_DELETE_BUTTON[3]);
                 if (ImGui.button("X##cr" + i)) removeIndex = i;
                 ImGui.popStyleColor();
             }
@@ -286,18 +285,18 @@ public class EventEditorDialog extends BaseDialog {
         int size = fieldConditions.size();
         if (removeIndex >= 0) {
             fieldConditions.remove(removeIndex);
-            fieldConditionKeys.remove(removeIndex);
-            fieldConditionCaseSens.remove(removeIndex);
+            fieldConditionTypeIndices.remove(removeIndex);
+            fieldConditionCaseSensitive.remove(removeIndex);
         }
         if (moveUpIndex > 0) {
             Collections.swap(fieldConditions, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldConditionKeys, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldConditionCaseSens, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldConditionTypeIndices, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldConditionCaseSensitive, moveUpIndex, moveUpIndex - 1);
         }
         if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
             Collections.swap(fieldConditions, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldConditionKeys, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldConditionCaseSens, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldConditionTypeIndices, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldConditionCaseSensitive, moveDownIndex, moveDownIndex + 1);
         }
     }
 
@@ -323,8 +322,8 @@ public class EventEditorDialog extends BaseDialog {
                 int prevType = fieldActionTypes.get(i).get();
                 if (ImGui.combo("##atype" + i, fieldActionTypes.get(i), ActionType.asFriendlyArray())) {
                     if (fieldActionTypes.get(i).get() != prevType) {
-                        fieldActionComboValues.get(i).set(0);
-                        fieldActionTextValues.get(i).set("");
+                        fieldActionComboIndices.get(i).set(0);
+                        fieldActionValues.get(i).set("");
                     }
                 }
 
@@ -335,21 +334,21 @@ public class EventEditorDialog extends BaseDialog {
                 switch (actionType) {
                     case CALL_WEBHOOK -> {
                         if (webhookNames.length > 0) {
-                            ImGui.combo("##awh" + i, fieldActionComboValues.get(i), webhookNames);
+                            ImGui.combo("##awh" + i, fieldActionComboIndices.get(i), webhookNames);
                         } else {
                             ImGui.textDisabled("No webhooks");
                         }
                     }
                     case OPEN_PROGRAM -> {
                         if (programNames.length > 0) {
-                            ImGui.combo("##aprog" + i, fieldActionComboValues.get(i), programNames);
+                            ImGui.combo("##aprog" + i, fieldActionComboIndices.get(i), programNames);
                         } else {
                             ImGui.textDisabled("No programs");
                         }
                     }
                     case OPEN_URL, TYPE_TEXT,
                          COPY_TO_CLIPBOARD, SHOW_NOTIFICATION,
-                         WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> ImGui.inputText("##atext" + i, fieldActionTextValues.get(i));
+                         WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> ImGui.inputText("##atext" + i, fieldActionValues.get(i));
                 }
 
                 ImGui.tableSetColumnIndex(2);
@@ -363,7 +362,7 @@ public class EventEditorDialog extends BaseDialog {
                 ImGui.endDisabled();
 
                 ImGui.tableSetColumnIndex(4);
-                ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
+                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON[0], GuiTheme.COLOR_DELETE_BUTTON[1], GuiTheme.COLOR_DELETE_BUTTON[2], GuiTheme.COLOR_DELETE_BUTTON[3]);
                 if (ImGui.button("X##ar" + i)) removeIndex = i;
                 ImGui.popStyleColor();
             }
@@ -375,24 +374,24 @@ public class EventEditorDialog extends BaseDialog {
         int size = fieldActionTypes.size();
         if (removeIndex >= 0) {
             fieldActionTypes.remove(removeIndex);
-            fieldActionComboValues.remove(removeIndex);
-            fieldActionTextValues.remove(removeIndex);
+            fieldActionComboIndices.remove(removeIndex);
+            fieldActionValues.remove(removeIndex);
         }
         if (moveUpIndex > 0) {
             Collections.swap(fieldActionTypes, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldActionComboValues, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldActionTextValues, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldActionComboIndices, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldActionValues, moveUpIndex, moveUpIndex - 1);
         }
         if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
             Collections.swap(fieldActionTypes, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldActionComboValues, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldActionTextValues, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldActionComboIndices, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldActionValues, moveDownIndex, moveDownIndex + 1);
         }
     }
 
     private String validateConditions() {
         for (int i = 0; i < fieldConditions.size(); i++) {
-            ConditionType type = ConditionType.values()[fieldConditionKeys.get(i).get()];
+            ConditionType type = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
             String val = fieldConditions.get(i)[1].get().trim();
             String label = "Condition " + (i + 1) + " (" + type.getFriendlyName() + "): ";
 
@@ -432,6 +431,35 @@ public class EventEditorDialog extends BaseDialog {
         return null;
     }
 
+    private List<DataStore.Event.Condition> buildConditions() {
+        List<DataStore.Event.Condition> conditions = new ArrayList<>();
+        for (int i = 0; i < fieldConditions.size(); i++) {
+            String typeName = ConditionType.values()[fieldConditionTypeIndices.get(i).get()].name();
+            String value = fieldConditions.get(i)[1].get().trim();
+            boolean caseSensitive = fieldConditionCaseSensitive.get(i).get();
+            conditions.add(new DataStore.Event.Condition(typeName, value, caseSensitive));
+        }
+        return conditions;
+    }
+
+    private List<DataStore.Event.Action> buildActions() {
+        List<DataStore.Event.Action> actions = new ArrayList<>();
+        for (int i = 0; i < fieldActionTypes.size(); i++) {
+            ActionType actionType = ActionType.values()[fieldActionTypes.get(i).get()];
+            String value = switch (actionType) {
+                case CALL_WEBHOOK -> webhookNames.length > 0 ? webhookNames[fieldActionComboIndices.get(i).get()] : null;
+                case OPEN_PROGRAM -> programNames.length > 0 ? programNames[fieldActionComboIndices.get(i).get()] : null;
+                case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
+                     SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> fieldActionValues.get(i).get().trim();
+            };
+            boolean allowEmptyValue = actionType == ActionType.PLAY_SOUND;
+            if (allowEmptyValue || (value != null && !value.isBlank())) {
+                actions.add(new DataStore.Event.Action(actionType.name(), value != null ? value : ""));
+            }
+        }
+        return actions;
+    }
+
     private void save() {
         String name = fieldName.get().trim();
         if (name.isEmpty()) {
@@ -445,29 +473,8 @@ public class EventEditorDialog extends BaseDialog {
             return;
         }
 
-        List<DataStore.Event.Condition> conditions = new ArrayList<>();
-        for (int i = 0; i < fieldConditions.size(); i++) {
-            String condType = ConditionType.values()[fieldConditionKeys.get(i).get()].name();
-            String condValue = fieldConditions.get(i)[1].get().trim();
-            boolean caseSensitive = fieldConditionCaseSens.get(i).get();
-            conditions.add(new DataStore.Event.Condition(condType, condValue, caseSensitive));
-        }
-
-        List<DataStore.Event.Action> actions = new ArrayList<>();
-        for (int i = 0; i < fieldActionTypes.size(); i++) {
-            ActionType actionType = ActionType.values()[fieldActionTypes.get(i).get()];
-            String value = switch (actionType) {
-                case CALL_WEBHOOK -> webhookNames.length > 0 ? webhookNames[fieldActionComboValues.get(i).get()] : null;
-                case OPEN_PROGRAM -> programNames.length > 0 ? programNames[fieldActionComboValues.get(i).get()] : null;
-                case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                     SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> fieldActionTextValues.get(i).get().trim();
-            };
-            boolean allowEmpty = actionType == ActionType.PLAY_SOUND;
-            if (allowEmpty || (value != null && !value.isBlank())) {
-                actions.add(new DataStore.Event.Action(actionType.name(), value != null ? value : ""));
-            }
-        }
-
+        List<DataStore.Event.Condition> conditions = buildConditions();
+        List<DataStore.Event.Action> actions = buildActions();
         List<DataStore.Event> events = storage.getData().getEvents();
 
         if (mode == DialogMode.EDIT && editing != null) {

@@ -35,8 +35,9 @@ public class ProgramsDialog extends BaseDialog {
                         BaudBound.getProgramEditorDialog().show(DialogMode.EDIT, items.get(selected.get()));
                     },
                     () -> {
-                        DataStore.Actions.Program orig = items.get(selected.get());
-                        items.add(new DataStore.Actions.Program(orig.getName() + " (copy)", orig.getPath(), orig.getArguments(), orig.isRunAsAdmin()));
+                        DataStore.Actions.Program copy = items.get(selected.get()).deepCopy();
+                        copy.setName(copy.getName() + " (copy)");
+                        items.add(copy);
                         storage.save();
                     },
                     () -> {

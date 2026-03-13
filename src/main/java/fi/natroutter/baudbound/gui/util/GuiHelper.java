@@ -2,6 +2,7 @@ package fi.natroutter.baudbound.gui.util;
 
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
+import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.foxlib.FoxLib;
 import imgui.ImGui;
@@ -21,18 +22,12 @@ import java.util.function.Consumer;
 
 public class GuiHelper {
 
+    /** No move buttons, no reserved height. Used by WebhooksDialog and ProgramsDialog. */
     public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onError) {
         listAndEditorButtons(id, data, selected, fillHeight, 0f, onCreate, onEdit, onDuplicate, onDelete, ()->{}, ()->{}, onError);
     }
 
-    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, float reservedHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onError) {
-        listAndEditorButtons(id, data, selected, fillHeight, reservedHeight, onCreate, onEdit, onDuplicate, onDelete, ()->{}, ()->{}, onError);
-    }
-
-    public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onMoveUp, Runnable onMoveDown, Runnable onError) {
-        listAndEditorButtons(id, data, selected, fillHeight, 0f, onCreate, onEdit, onDuplicate, onDelete, onMoveUp, onMoveDown, onError);
-    }
-
+    /** Move buttons, reserved bottom height. Full variant used by MainWindow. */
     public static <T extends DataStore.Named> void listAndEditorButtons(String id, List<T> data, ImInt selected, boolean fillHeight, float reservedHeight, Runnable onCreate, Runnable onEdit, Runnable onDuplicate, Runnable onDelete, Runnable onMoveUp, Runnable onMoveDown, Runnable onError) {
         float itemSpacing = ImGui.getStyle().getItemSpacingY();
         float lineHeight = ImGui.getTextLineHeightWithSpacing();
@@ -71,11 +66,11 @@ public class GuiHelper {
         float remaining  = ImGui.getContentRegionAvailX() - (arrowWidth + spacing) * 2;
         float btnWidth   = (remaining - spacing * 3) / 4;
 
-        if (ImGui.button("Create", new ImVec2(btnWidth, 20))) {
+        if (ImGui.button("Create", new ImVec2(btnWidth, GuiTheme.BUTTON_HEIGHT))) {
             onCreate.run();
         }
         ImGui.sameLine();
-        if (ImGui.button("Edit", new ImVec2(btnWidth, 20))) {
+        if (ImGui.button("Edit", new ImVec2(btnWidth, GuiTheme.BUTTON_HEIGHT))) {
             if (!data.isEmpty()) {
                 onEdit.run();
             } else {
@@ -83,7 +78,7 @@ public class GuiHelper {
             }
         }
         ImGui.sameLine();
-        if (ImGui.button("Duplicate", new ImVec2(btnWidth, 20))) {
+        if (ImGui.button("Duplicate", new ImVec2(btnWidth, GuiTheme.BUTTON_HEIGHT))) {
             if (!data.isEmpty()) {
                 onDuplicate.run();
             } else {
@@ -91,7 +86,7 @@ public class GuiHelper {
             }
         }
         ImGui.sameLine();
-        if (ImGui.button("Delete", new ImVec2(btnWidth, 20))) {
+        if (ImGui.button("Delete", new ImVec2(btnWidth, GuiTheme.BUTTON_HEIGHT))) {
             if (!data.isEmpty()) {
                 onDelete.run();
             } else {
@@ -100,13 +95,13 @@ public class GuiHelper {
         }
         ImGui.sameLine();
         ImGui.beginDisabled(data.isEmpty() || selected.get() == 0);
-        if (ImGui.button("^##up" + id, new ImVec2(arrowWidth, 20))) {
+        if (ImGui.button("^##up" + id, new ImVec2(arrowWidth, GuiTheme.BUTTON_HEIGHT))) {
             onMoveUp.run();
         }
         ImGui.endDisabled();
         ImGui.sameLine();
         ImGui.beginDisabled(data.isEmpty() || selected.get() >= data.size() - 1);
-        if (ImGui.button("v##dn" + id, new ImVec2(arrowWidth, 20))) {
+        if (ImGui.button("v##dn" + id, new ImVec2(arrowWidth, GuiTheme.BUTTON_HEIGHT))) {
             onMoveDown.run();
         }
         ImGui.endDisabled();
@@ -135,7 +130,6 @@ public class GuiHelper {
         ImGui.setItemTooltip(content);
     }
 
-    public static void instructions() { instructions("next fields"); }
     public static void instructions(String place) {
         ImGui.beginDisabled();
         ImGui.text("You can use these variables in " + place + ":");
@@ -152,17 +146,6 @@ public class GuiHelper {
         if (result[0] >= 0)                        rows.remove(result[0]);
         if (result[1] > 0)                         Collections.swap(rows, result[1], result[1] - 1);
         if (result[2] >= 0 && result[2] < size - 1) Collections.swap(rows, result[2], result[2] + 1);
-    }
-
-    // Column 0 is a combo, column 1 is inputText
-    public static void keyValueTable(String id, String col0Header, String col1Header,
-                                     List<ImString[]> rows, String[] col0Options, List<ImInt> col0Selections) {
-        int[] result = renderTable(id, col0Header, col1Header, rows,
-                row -> ImGui.combo("##c0" + id + row, col0Selections.get(row), col0Options));
-        int size = rows.size();
-        if (result[0] >= 0)                        { rows.remove(result[0]); col0Selections.remove(result[0]); }
-        if (result[1] > 0)                         { Collections.swap(rows, result[1], result[1] - 1); Collections.swap(col0Selections, result[1], result[1] - 1); }
-        if (result[2] >= 0 && result[2] < size - 1) { Collections.swap(rows, result[2], result[2] + 1); Collections.swap(col0Selections, result[2], result[2] + 1); }
     }
 
     // Returns int[]{removeIndex, moveUpIndex, moveDownIndex}
@@ -201,7 +184,7 @@ public class GuiHelper {
                 ImGui.endDisabled();
 
                 ImGui.tableSetColumnIndex(4);
-                ImGui.pushStyleColor(ImGuiCol.Button, 0.6f, 0.1f, 0.1f, 1.0f);
+                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON);
                 if (ImGui.button("X##r" + id + row)) removeIndex = row;
                 ImGui.popStyleColor();
             }
