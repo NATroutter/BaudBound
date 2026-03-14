@@ -11,6 +11,7 @@ import fi.natroutter.baudbound.gui.dialog.AboutDialog;
 import fi.natroutter.baudbound.gui.dialog.EventEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.MessageDialog;
 import fi.natroutter.baudbound.gui.dialog.SettingsDialog;
+import fi.natroutter.baudbound.gui.dialog.StatesDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhookEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
@@ -77,6 +78,7 @@ public class BaudBound extends Application {
     @Getter private static ProgramsDialog programsDialog;
     @Getter private static ProgramEditorDialog programEditorDialog;
     @Getter private static EventEditorDialog eventEditorDialog;
+    @Getter private static StatesDialog statesDialog;
 
     private static MainWindow mainWindow;
 
@@ -113,6 +115,7 @@ public class BaudBound extends Application {
         messageDialog = new MessageDialog();
         aboutDialog = new AboutDialog();
         eventEditorDialog = new EventEditorDialog();
+        statesDialog = new StatesDialog();
         mainWindow = new MainWindow();
 
         launch(app);
@@ -160,6 +163,7 @@ public class BaudBound extends Application {
         eventEditorDialog.render();
         programsDialog.render();
         programEditorDialog.render();
+        statesDialog.render();
     }
 
     @Override

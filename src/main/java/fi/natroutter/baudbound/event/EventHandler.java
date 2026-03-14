@@ -13,12 +13,16 @@ import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.io.File;
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
@@ -40,6 +44,45 @@ public class EventHandler {
 
     private final FoxLogger logger = BaudBound.getLogger();
     private final StorageProvider storage = BaudBound.getStorageProvider();
+
+    /**
+     * Named state map. Keys are state names; the special name {@value DEFAULT_STATE} is
+     * used when no explicit name is provided. Written synchronously on the serial thread
+     * so every state change is visible to the very next incoming line.
+     * <p>
+     * Format for action/condition values:
+     * <ul>
+     *   <li>{@code SET_STATE} — {@code "value"} (default state) or {@code "name|value"}</li>
+     *   <li>{@code CLEAR_STATE} — blank (default state) or {@code "name"}</li>
+     *   <li>{@code STATE_EQUALS} — {@code "value"} (default) or {@code "name|value"}</li>
+     *   <li>{@code STATE_IS_EMPTY} — blank (default) or {@code "name"}</li>
+     * </ul>
+     */
+    private static final String DEFAULT_STATE = "default";
+    private final Map<String, String> states = new ConcurrentHashMap<>();
+
+    /**
+     * Returns an unmodifiable snapshot of the current state map for display purposes.
+     * Keys are state names; values are the current state values.
+     */
+    public Map<String, String> getStates() {
+        return Map.copyOf(states);
+    }
+
+    /**
+     * Removes the named state entry. If {@code name} is blank, clears the default state.
+     * Safe to call from the GLFW thread since {@link ConcurrentHashMap} handles concurrent access.
+     *
+     * @param name the state name to clear, or blank for the default state
+     */
+    public void clearState(String name) {
+        states.remove(name == null || name.isBlank() ? DEFAULT_STATE : name.trim());
+    }
+
+    /** Removes all state entries. */
+    public void clearAllStates() {
+        states.clear();
+    }
 
     /**
      * Evaluates all configured events against {@code input} and fires matching actions.
@@ -109,6 +152,17 @@ public class EventHandler {
                 case LESS_THAN       -> compareNumeric(input, value) < 0;
                 case BETWEEN         -> isBetween(input, value);
                 case LENGTH_EQUALS   -> parseLengthEquals(input, value);
+                case STATE_EQUALS -> {
+                    String[] p = value.split("\\|", 2);
+                    yield p.length == 2
+                            ? p[1].equals(states.get(p[0].trim()))
+                            : value.equals(states.get(DEFAULT_STATE));
+                }
+                case STATE_IS_EMPTY -> {
+                    String name = value.isBlank() ? DEFAULT_STATE : value.trim();
+                    String v = states.get(name);
+                    yield v == null || v.isBlank();
+                }
             };
 
             if (!matches) return false;
@@ -128,6 +182,26 @@ public class EventHandler {
             if (type == null) continue;
             String value = action.getValue();
 
+            // State actions are executed synchronously so the new state is visible
+            // to the very next serial line processed on this thread.
+            if (type == ActionType.SET_STATE) {
+                String[] p = value != null ? value.split("\\|", 2) : new String[]{""};
+                if (p.length == 2) {
+                    states.put(p[0].trim(), p[1]);
+                    logger.info("State \"" + p[0].trim() + "\" set to: \"" + p[1] + "\"");
+                } else {
+                    states.put(DEFAULT_STATE, value != null ? value : "");
+                    logger.info("State \"" + DEFAULT_STATE + "\" set to: \"" + value + "\"");
+                }
+                continue;
+            }
+            if (type == ActionType.CLEAR_STATE) {
+                String name = (value != null && !value.isBlank()) ? value.trim() : DEFAULT_STATE;
+                states.remove(name);
+                logger.info("State \"" + name + "\" cleared");
+                continue;
+            }
+
             Thread.ofVirtual().start(() -> {
                 try {
                     switch (type) {
@@ -140,6 +214,7 @@ public class EventHandler {
                         case WRITE_TO_FILE     -> writeToFile(value, input);
                         case APPEND_TO_FILE    -> appendToFile(value, input);
                         case PLAY_SOUND        -> playSound(value);
+                        default                -> logger.error("Unhandled action type: " + type);
                     }
                 } catch (Exception e) {
                     logger.error("Action [" + type + "] failed for event \"" + event.getName() + "\": " + e.getMessage());
@@ -358,17 +433,22 @@ public class EventHandler {
     }
 
     private DataStore.Actions.Webhook resolveWebhook(DataStore.Actions.Webhook original, String input) {
+        String resolvedInput = original.isUrlEscape()
+                ? URLEncoder.encode(input, StandardCharsets.UTF_8)
+                : input;
+
         List<DataStore.Actions.Webhook.Header> resolvedHeaders = original.getHeaders() == null ? List.of() :
                 original.getHeaders().stream()
-                        .map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), resolve(h.getValue(), input)))
+                        .map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), resolve(h.getValue(), resolvedInput)))
                         .toList();
 
         return new DataStore.Actions.Webhook(
                 original.getName(),
-                resolve(original.getUrl(), input),
+                resolve(original.getUrl(), resolvedInput),
                 original.getMethod(),
                 resolvedHeaders,
-                resolve(original.getBody(), input)
+                resolve(original.getBody(), resolvedInput),
+                original.isUrlEscape()
         );
     }
 

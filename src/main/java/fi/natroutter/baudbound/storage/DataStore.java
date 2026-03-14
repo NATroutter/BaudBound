@@ -192,11 +192,19 @@ public class DataStore {
             @SerializedName("body")
             private String body;
 
+            /**
+             * When {@code true}, the values substituted for {@code {input}} and
+             * {@code {timestamp}} are URL-encoded before being inserted into the
+             * URL, headers, and body templates.
+             */
+            @SerializedName("url_escape")
+            private boolean urlEscape;
+
             /** Returns a fully independent deep copy of this webhook (headers list is not shared). */
             public Webhook deepCopy() {
                 List<Header> headersCopy = headers == null ? new ArrayList<>() :
                         headers.stream().map(h -> new Header(h.getKey(), h.getValue())).toList();
-                return new Webhook(name, url, method, headersCopy, body);
+                return new Webhook(name, url, method, headersCopy, body, urlEscape);
             }
 
             @Data

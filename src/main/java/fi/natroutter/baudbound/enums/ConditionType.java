@@ -12,6 +12,12 @@ import java.util.Arrays;
  * Numeric conditions ({@code GREATER_THAN}, {@code LESS_THAN}, {@code BETWEEN},
  * {@code IS_NUMERIC}) do not use case sensitivity and require the input to be parseable
  * as a {@code double}.
+ * <p>
+ * State conditions ({@code STATE_EQUALS}, {@code STATE_IS_EMPTY}) check named entries
+ * in the internal state map set by {@code SET_STATE} / {@code CLEAR_STATE} actions.
+ * The value field holds an optional state name; if left blank the {@code "default"} state
+ * is used. {@code STATE_EQUALS} additionally takes a {@code |}-separated expected value
+ * (format: {@code stateName|expectedValue} or just {@code expectedValue} for the default state).
  */
 @AllArgsConstructor
 @Getter
@@ -40,7 +46,18 @@ public enum ConditionType {
     /** Input (as a number) must fall within the given {@code min,max} range (inclusive). */
     BETWEEN("Between (min,max)"),
     /** Input length must equal the given integer. */
-    LENGTH_EQUALS("Length Equals");
+    LENGTH_EQUALS("Length Equals"),
+    /**
+     * The named state must equal the expected value.
+     * Value format: {@code expectedValue} (checks the default state) or
+     * {@code stateName|expectedValue} (checks a named state).
+     */
+    STATE_EQUALS("State Equals"),
+    /**
+     * The named state must be unset or blank.
+     * Value format: blank (checks the default state) or {@code stateName} (checks a named state).
+     */
+    STATE_IS_EMPTY("State Is Empty");
 
     private final String friendlyName;
 
@@ -51,7 +68,7 @@ public enum ConditionType {
 
     /**
      * Returns true if this condition type supports the case-sensitivity toggle.
-     * Numeric and regex types handle their own case or don't operate on text.
+     * Numeric, regex, and state types handle their own case or don't operate on text.
      */
     public boolean supportsCaseSensitivity() {
         return requiresValue()
@@ -59,7 +76,9 @@ public enum ConditionType {
                 && this != GREATER_THAN
                 && this != LESS_THAN
                 && this != BETWEEN
-                && this != LENGTH_EQUALS;
+                && this != LENGTH_EQUALS
+                && this != STATE_EQUALS
+                && this != STATE_IS_EMPTY;
     }
 
     /** Returns all friendly names as a plain array, suitable for ImGui combo-boxes. */

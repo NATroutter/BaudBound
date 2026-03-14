@@ -112,9 +112,9 @@ public class EventEditorDialog extends BaseDialog {
                                 if (programNames[i].equals(a.getValue())) { comboVal.set(i); break; }
                             }
                         }
-                        case OPEN_URL, TYPE_TEXT,
-                             COPY_TO_CLIPBOARD, SHOW_NOTIFICATION,
-                             WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> textVal.set(a.getValue() != null ? a.getValue() : "");
+                        case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
+                             SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
+                             PLAY_SOUND, SET_STATE, CLEAR_STATE -> textVal.set(a.getValue() != null ? a.getValue() : "");
                     }
                     fieldActionComboIndices.add(comboVal);
                     fieldActionValues.add(textVal);
@@ -196,26 +196,42 @@ public class EventEditorDialog extends BaseDialog {
 
     private void renderActionHints() {
         ImGui.spacing();
-        ImGui.text("Format hints");
+        ImGui.text("Action format hints");
         ImGui.beginDisabled();
 
+        ImGui.text("Open URL:");
+        ImGui.bulletText("Opens the URL in the default system browser.");
+        ImGui.bulletText("{input} can be used anywhere in the URL.");
+        ImGui.bulletText("Example: https://example.com/item/{input}");
+
+        ImGui.spacing();
+        ImGui.text("Type Text:");
+        ImGui.bulletText("Writes text by placing it on the clipboard and sending Ctrl+V.");
+        ImGui.bulletText("The clipboard contents will be replaced each time this fires.");
+        ImGui.bulletText("Make sure the target window is focused before the trigger fires.");
+
+        ImGui.spacing();
+        ImGui.text("Copy to Clipboard:");
+        ImGui.bulletText("Text is placed in the clipboard without pasting.");
+
+        ImGui.spacing();
         ImGui.text("Write to File:");
         ImGui.bulletText("Overwrites the file with new content on each trigger.");
-        ImGui.bulletText("Value: path  — writes \"{timestamp}: {input}\".");
-        ImGui.bulletText("Value: path|content  — writes custom content.");
+        ImGui.bulletText("Value: path - writes \"{timestamp}: {input}\".");
+        ImGui.bulletText("Value: path|content - writes custom content.");
         ImGui.bulletText("Example: C:\\logs\\latest.txt|{input}");
 
         ImGui.spacing();
         ImGui.text("Append to File:");
         ImGui.bulletText("Appends a new line to the file on each trigger.");
-        ImGui.bulletText("Value: path  — appends \"{timestamp}: {input}\".");
-        ImGui.bulletText("Value: path|content  — appends custom content.");
+        ImGui.bulletText("Value: path - appends \"{timestamp}: {input}\".");
+        ImGui.bulletText("Value: path|content - appends custom content.");
         ImGui.bulletText("Example: C:\\logs\\data.txt|{timestamp}: {input}");
 
         ImGui.spacing();
         ImGui.text("Show Notification:");
-        ImGui.bulletText("Value: message  — shows an INFO notification.");
-        ImGui.bulletText("Value: TYPE|message  — TYPE: INFO, WARNING, ERROR, NONE.");
+        ImGui.bulletText("Value: message - shows an INFO notification.");
+        ImGui.bulletText("Value: TYPE|message - TYPE: INFO, WARNING, ERROR, NONE.");
         ImGui.bulletText("Example: WARNING|Temperature high: {input}");
 
         ImGui.spacing();
@@ -224,8 +240,33 @@ public class EventEditorDialog extends BaseDialog {
         ImGui.bulletText("Leave empty to play the system beep.");
 
         ImGui.spacing();
-        ImGui.text("Copy to Clipboard:");
-        ImGui.bulletText("Text is placed in the clipboard without pasting.");
+        ImGui.text("Set State:");
+        ImGui.bulletText("Value: value - sets the default state to 'value'.");
+        ImGui.bulletText("Value: name|value - sets a named state.");
+        ImGui.bulletText("Example: location|warehouse");
+
+        ImGui.spacing();
+        ImGui.text("Clear State:");
+        ImGui.bulletText("Leave blank to clear the default state.");
+        ImGui.bulletText("Value: name - clears the named state 'name'.");
+        ImGui.bulletText("Must match the name used in Set State (name|value format).");
+
+        ImGui.endDisabled();
+
+        ImGui.spacing();
+        ImGui.text("Condition format hints");
+        ImGui.beginDisabled();
+
+        ImGui.text("State Equals:");
+        ImGui.bulletText("Value: value - checks if the default state equals 'value'.");
+        ImGui.bulletText("Value: name|value - checks if state 'name' equals 'value'.");
+
+        ImGui.spacing();
+        ImGui.text("State Is Empty:");
+        ImGui.bulletText("Leave blank to check the default state.");
+        ImGui.bulletText("Value: name - checks if state 'name' is unset.");
+
+        ImGui.spacing();
 
         ImGui.endDisabled();
     }
@@ -357,9 +398,9 @@ public class EventEditorDialog extends BaseDialog {
                             ImGui.textDisabled("No programs");
                         }
                     }
-                    case OPEN_URL, TYPE_TEXT,
-                         COPY_TO_CLIPBOARD, SHOW_NOTIFICATION,
-                         WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> ImGui.inputText("##atext" + i, fieldActionValues.get(i));
+                    case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
+                         SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
+                         PLAY_SOUND, SET_STATE, CLEAR_STATE -> ImGui.inputText("##atext" + i, fieldActionValues.get(i));
                 }
 
                 ImGui.tableSetColumnIndex(2);
@@ -441,6 +482,10 @@ public class EventEditorDialog extends BaseDialog {
                     } catch (NumberFormatException e) { return label + "value must be a whole number (e.g. 5)."; }
                 }
                 case IS_NUMERIC -> {} // no value required
+                case STATE_IS_EMPTY -> {} // value is an optional state name; blank = default state
+                case STATE_EQUALS -> {
+                    if (val.isEmpty()) return label + "value cannot be empty.";
+                }
             }
         }
         return null;
@@ -470,12 +515,14 @@ public class EventEditorDialog extends BaseDialog {
                 case CALL_WEBHOOK -> webhookNames.length > 0 ? webhookNames[fieldActionComboIndices.get(i).get()] : null;
                 case OPEN_PROGRAM -> programNames.length > 0 ? programNames[fieldActionComboIndices.get(i).get()] : null;
                 case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                     SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE, PLAY_SOUND -> fieldActionValues.get(i).get().trim();
+                     SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
+                     PLAY_SOUND, SET_STATE, CLEAR_STATE -> fieldActionValues.get(i).get().trim();
             };
-            boolean allowEmptyValue = actionType == ActionType.PLAY_SOUND;
+            boolean allowEmptyValue = actionType == ActionType.PLAY_SOUND || actionType == ActionType.CLEAR_STATE;
             if (allowEmptyValue || (value != null && !value.isBlank())) {
                 actions.add(new DataStore.Event.Action(actionType.name(), value != null ? value : ""));
             }
+            // Note: value may be null only for CALL_WEBHOOK / OPEN_PROGRAM when no entries exist.
         }
         return actions;
     }

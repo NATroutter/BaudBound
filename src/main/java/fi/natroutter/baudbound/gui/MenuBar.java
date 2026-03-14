@@ -4,6 +4,7 @@ import fi.natroutter.baudbound.BaudBound;
 
 import fi.natroutter.baudbound.gui.dialog.AboutDialog;
 import fi.natroutter.baudbound.gui.dialog.SettingsDialog;
+import fi.natroutter.baudbound.gui.dialog.StatesDialog;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import imgui.ImGui;
@@ -21,12 +22,17 @@ public class MenuBar {
     private final SettingsDialog settingsDialog = BaudBound.getSettingsDialog();
     private final WebhooksDialog webhooksDialog = BaudBound.getWebhooksDialog();
     private final ProgramsDialog programDialog = BaudBound.getProgramsDialog();
+    private final StatesDialog statesDialog = BaudBound.getStatesDialog();
 
 
     public void render() {
         if (ImGui.beginMenuBar()) {
             if (ImGui.menuItem("Settings")) {
                 settingsDialog.show();
+            }
+
+            if (ImGui.menuItem("States")) {
+                statesDialog.show();
             }
 
             if (ImGui.beginMenu("Actions")) {

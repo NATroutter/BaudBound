@@ -15,6 +15,7 @@ import imgui.ImGui;
 import imgui.ImVec2;
 import imgui.flag.ImGuiChildFlags;
 import imgui.flag.ImGuiInputTextFlags;
+import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 import imgui.type.ImString;
 
@@ -36,11 +37,12 @@ public class WebhookEditorDialog extends BaseDialog {
     private final FoxLogger logger = BaudBound.getLogger();
     private final StorageProvider storage = BaudBound.getStorageProvider();
 
-    private final ImString fieldName   = new ImString();
-    private final ImString fieldUrl    = new ImString(1024);
-    private final ImInt    fieldMethod = new ImInt();
+    private final ImString  fieldName      = new ImString();
+    private final ImString  fieldUrl       = new ImString(1024);
+    private final ImInt     fieldMethod    = new ImInt();
     private final List<ImString[]> fieldHeaders = new ArrayList<>();
-    private final ImString fieldBody   = new ImString(4096);
+    private final ImString  fieldBody      = new ImString(4096);
+    private final ImBoolean fieldUrlEscape = new ImBoolean(false);
 
     private volatile boolean testing = false;
 
@@ -72,6 +74,7 @@ public class WebhookEditorDialog extends BaseDialog {
                 }
             }
             fieldBody.set(webhook.getBody() != null ? webhook.getBody() : "");
+            fieldUrlEscape.set(webhook.isUrlEscape());
         } else {
             this.editing = null;
             fieldName.set("");
@@ -79,6 +82,7 @@ public class WebhookEditorDialog extends BaseDialog {
             fieldMethod.set(0);
             fieldHeaders.clear();
             fieldBody.set("");
+            fieldUrlEscape.set(false);
         }
 
         requestOpen();
@@ -134,6 +138,12 @@ public class WebhookEditorDialog extends BaseDialog {
                     ImGuiInputTextFlags.AllowTabInput);
 
             ImGui.spacing();
+            ImGui.checkbox("URL-encode variables", fieldUrlEscape);
+            GuiHelper.toolTip("When enabled, the values substituted for {input} and {timestamp}\n" +
+                    "are URL-encoded before being inserted into the URL, headers, and body.\n" +
+                    "Useful when passing serial data as a query parameter or path segment.");
+
+            ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
 
@@ -181,7 +191,7 @@ public class WebhookEditorDialog extends BaseDialog {
         String method = HttpMethod.values()[fieldMethod.get()].name();
         String body = fieldBody.get().trim();
         DataStore.Actions.Webhook tempWebhook = new DataStore.Actions.Webhook(
-                fieldName.get().trim(), url, method, buildHeaders(), body.isEmpty() ? null : body);
+                fieldName.get().trim(), url, method, buildHeaders(), body.isEmpty() ? null : body, fieldUrlEscape.get());
 
         testing = true;
         Thread.ofVirtual().start(() -> {
@@ -220,8 +230,9 @@ public class WebhookEditorDialog extends BaseDialog {
             editing.setMethod(method);
             editing.setHeaders(buildHeaders());
             editing.setBody(body);
+            editing.setUrlEscape(fieldUrlEscape.get());
         } else {
-            webhooks.add(new DataStore.Actions.Webhook(name, url, method, buildHeaders(), body));
+            webhooks.add(new DataStore.Actions.Webhook(name, url, method, buildHeaders(), body, fieldUrlEscape.get()));
         }
 
         storage.save();

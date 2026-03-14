@@ -32,7 +32,11 @@ public enum ActionType {
     /** Append a line to a file on each trigger. */
     APPEND_TO_FILE("Append to File"),
     /** Play a {@code .wav} file, or the system beep if no path is given. */
-    PLAY_SOUND("Play Sound");
+    PLAY_SOUND("Play Sound"),
+    /** Set the internal pending-state variable to the given value. */
+    SET_STATE("Set State"),
+    /** Clear the internal pending-state variable. No value field is used. */
+    CLEAR_STATE("Clear State");
 
     private final String friendlyName;
 

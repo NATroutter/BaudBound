@@ -48,6 +48,9 @@ java -jar target/baudbound-1.0.0.jar
 
 - **No duplicate logic** — before writing a loop, helper, or utility, check whether it already exists (e.g. `EnumUtil`, `GuiHelper`, `BaseDialog`). Extract shared logic rather than copy-pasting.
 - **Readable over clever** — prefer clear variable names and straightforward control flow. If something needs a comment to be understood, simplify it first.
+- **Keep Javadocs up to date** — public classes, methods, and non-obvious parameters must have Javadoc comments. When modifying existing code, update any Javadoc that no longer accurately describes the behaviour.
+- **Keep documentation up to date** — when adding, removing, or renaming classes, packages, enums, or features, update the package map and any relevant `agent_docs/` files in the same change. If a new area warrants its own doc, add it under `agent_docs/` and link it in the "Further reading" section.
+- **Keep Javadocs up to date** — public classes, methods, and non-obvious parameters must have Javadoc comments. When modifying existing code, update any Javadoc that no longer accurately describes the behaviour.
 
 ## Critical constraints — read before touching these areas
 
