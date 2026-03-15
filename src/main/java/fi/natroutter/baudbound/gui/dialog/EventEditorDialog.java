@@ -562,5 +562,6 @@ public class EventEditorDialog extends BaseDialog {
 
         storage.save();
         ImGui.closeCurrentPopup();
+        BaudBound.getMessageDialog().show("Saved", "Event \"" + name + "\" saved successfully.", new DialogButton("OK", () -> {}));
     }
 }

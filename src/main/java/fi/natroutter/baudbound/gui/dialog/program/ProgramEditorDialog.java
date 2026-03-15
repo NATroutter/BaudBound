@@ -145,6 +145,6 @@ public class ProgramEditorDialog extends BaseDialog {
         logger.info("Saved program: " + name);
         storage.save();
         ImGui.closeCurrentPopup();
-        BaudBound.getProgramsDialog().show();
+        BaudBound.getMessageDialog().show("Saved", "Program \"" + name + "\" saved successfully.", new DialogButton("OK", () -> BaudBound.getProgramsDialog().show()));
     }
 }

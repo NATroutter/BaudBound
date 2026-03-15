@@ -278,6 +278,7 @@ public class SettingsDialog extends BaseDialog {
         device.setFlowControl(FlowControl.values()[optionDeviceFlowControl.get()].name());
 
         storage.save();
+        BaudBound.getMessageDialog().show("Saved", "Settings saved successfully.", new DialogButton("OK", this::requestOpen));
     }
 
     private static int findIntIndex(String[] array, int value) {

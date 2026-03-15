@@ -237,6 +237,6 @@ public class WebhookEditorDialog extends BaseDialog {
 
         storage.save();
         ImGui.closeCurrentPopup();
-        BaudBound.getWebhooksDialog().show();
+        BaudBound.getMessageDialog().show("Saved", "Webhook \"" + name + "\" saved successfully.", new DialogButton("OK", () -> BaudBound.getWebhooksDialog().show()));
     }
 }

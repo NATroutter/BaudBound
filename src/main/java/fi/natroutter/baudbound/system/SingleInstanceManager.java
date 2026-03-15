@@ -20,6 +20,10 @@ import java.nio.file.Path;
  * <p>
  * Protocol: second instance sends {@code BAUDBOUND_PING}, first instance
  * replies {@code BAUDBOUND_PONG} then calls {@code onShowRequest}.
+ * <p>
+ * Crash recovery: if the lock file is stale (held by a dead process after a
+ * crash or forced shutdown), the stale files are cleared and the lock is
+ * re-acquired so the app starts normally on the next launch.
  */
 public class SingleInstanceManager {
 
@@ -37,28 +41,65 @@ public class SingleInstanceManager {
 
     /**
      * Tries to acquire the single-instance lock.
+     * <p>
+     * If the lock appears stale (held by a dead process after a crash), the
+     * stale files are removed and the lock is re-acquired automatically.
      *
      * @param onShowRequest called (on a daemon thread) when a second instance starts
      * @return true if this is the first instance, false if another BaudBound is already running
      */
     public static boolean tryAcquire(Runnable onShowRequest) {
+        if (tryAcquireLock(onShowRequest)) {
+            return true;
+        }
+
+        // Lock held by another process — check if a live BaudBound is running.
+        if (signalRunningInstance()) {
+            return false; // Another live instance acknowledged us.
+        }
+
+        // IPC failed: the lock is stale (left over from a crash or forced shutdown).
+        // Release our partial state, clear the dead files, and try again.
+        release();
+        silentDelete(PORT_FILE);
+        silentDelete(LOCK_FILE);
+
+        if (tryAcquireLock(onShowRequest)) {
+            return true;
+        }
+
+        // Another instance started in the race window between our delete and retry.
+        // Give it a moment to bind its IPC listener, then signal it.
+        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+        return !signalRunningInstance();
+    }
+
+    /**
+     * Attempts to acquire the OS-level file lock and start the IPC listener.
+     *
+     * @param onShowRequest forwarded to {@link #startListener}
+     * @return true if the lock was acquired and the IPC server is running
+     */
+    private static boolean tryAcquireLock(Runnable onShowRequest) {
         try {
             lockRaf     = new RandomAccessFile(LOCK_FILE.toFile(), "rw");
             lockChannel = lockRaf.getChannel();
             fileLock    = lockChannel.tryLock();
 
             if (fileLock != null) {
-                // First instance — bind on an OS-assigned free port and publish it
+                // First instance — bind on an OS-assigned free port and publish it.
                 serverSocket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
-                int port = serverSocket.getLocalPort();
-                Files.writeString(PORT_FILE, String.valueOf(port));
+                Files.writeString(PORT_FILE, String.valueOf(serverSocket.getLocalPort()));
                 startListener(onShowRequest);
                 return true;
             }
         } catch (IOException ignored) {}
+        return false;
+    }
 
-        // Another instance holds the lock — signal it
-        return !signalRunningInstance();
+    /** Deletes a path, silently ignoring any failure. */
+    private static void silentDelete(Path path) {
+        try { Files.deleteIfExists(path); } catch (IOException ignored) {}
     }
 
     public static void release() {
