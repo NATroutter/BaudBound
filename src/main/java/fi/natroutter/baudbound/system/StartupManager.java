@@ -5,6 +5,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+/**
+ * Registers or unregisters the app in the OS startup mechanism so it launches
+ * automatically when the user logs in.
+ *
+ * <ul>
+ *   <li>Windows — {@code HKCU\Software\Microsoft\Windows\CurrentVersion\Run} via PowerShell,
+ *       invokes {@code javaw.exe -jar BaudBound.jar} (no console window)</li>
+ *   <li>macOS — {@code ~/Library/LaunchAgents/<id>.plist}</li>
+ *   <li>Linux — {@code ~/.config/autostart/BaudBound.desktop}</li>
+ * </ul>
+ */
 public class StartupManager {
 
     private static final String APP_NAME = "BaudBound";
@@ -25,6 +36,9 @@ public class StartupManager {
 
     /**
      * Registers or unregisters the app from OS startup.
+     *
+     * @param enable true to register, false to remove the startup entry
+     * @throws Exception if the OS operation fails or the JAR path cannot be resolved
      */
     public static void setEnabled(boolean enable) throws Exception {
         String os = os();
@@ -54,14 +68,13 @@ public class StartupManager {
 
     private static void enableWindows() throws Exception {
         String java = javaExecutable().replace('/', '\\');
-        // Use javaw.exe to suppress the console window on Windows
+        // Use javaw.exe to suppress the console window on Windows.
         if (java.endsWith("java.exe")) java = java.replace("java.exe", "javaw.exe");
         String jar = jarPath().replace('/', '\\');
-        // Value that Windows will execute: "javaw.exe" -jar "app.jar"
         String value = "\"" + java + "\" -jar \"" + jar + "\"";
 
-        // Use PowerShell — reg.exe mis-parses /d values that contain embedded quotes
-        // PowerShell single-quoted strings pass the value verbatim (escape ' as '')
+        // Use PowerShell — reg.exe mis-parses /d values that contain embedded quotes.
+        // PowerShell single-quoted strings pass the value verbatim (escape ' as '').
         String psScript = "Set-ItemProperty " +
                 "-Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' " +
                 "-Name '" + APP_NAME + "' " +
@@ -180,7 +193,6 @@ public class StartupManager {
     }
 
     private static String javaExecutable() {
-        // Prefer the actual executable that launched this process
         return ProcessHandle.current().info().command()
                 .orElseGet(() -> System.getProperty("java.home") + File.separator + "bin" + File.separator + "java");
     }

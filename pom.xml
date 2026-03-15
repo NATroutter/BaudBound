@@ -6,7 +6,7 @@
 
 	<groupId>fi.natroutter.baudbound</groupId>
 	<artifactId>baudbound</artifactId>
-	<version>1.1.0</version>
+	<version>1.1.1</version>
 
 	<packaging>jar</packaging>
 
@@ -99,6 +99,7 @@
 				<artifactId>maven-shade-plugin</artifactId>
 				<version>3.6.0</version>
 				<configuration>
+					<finalName>BaudBound</finalName>
 					<createDependencyReducedPom>false</createDependencyReducedPom>
 					<filters>
 						<filter>

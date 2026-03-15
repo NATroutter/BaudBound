@@ -23,6 +23,7 @@ fi.natroutter.baudbound/
 ├── serial/SerialHandler.java # Connect / disconnect / read loop
 ├── storage/                  # DataStore (POJO model) + StorageProvider (load/save)
 ├── system/StartupManager.java
+├── system/ShortcutManager.java
 └── gui/
     ├── MainWindow.java       # Fullscreen event-list window
     ├── MenuBar.java
