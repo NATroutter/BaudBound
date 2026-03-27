@@ -7,20 +7,30 @@
 ```
 DataStore
 ├── Settings
-│   ├── Generic  (startWithOS, startHidden, autoConnect)
-│   ├── Event    (runFirstOnly, useDefaultEvent, defaultEvent)
-│   └── Device   (port, baudRate, dataBits, stopBits, parity, flowControl)
+│   ├── Generic  (startHidden)
+│   └── Event    (runFirstOnly, conditionEventsFirst, skipEmptyConditions)
 ├── Actions
-│   ├── List<Webhook>  (name, url, method, headers, body)
+│   ├── List<Webhook>  (name, url, method, headers, body, urlEscape)
 │   └── List<Program>  (name, path, arguments, runAsAdmin)
+├── List<Device>       (name, port, baudRate, dataBits, stopBits, parity, flowControl, autoConnect)
 └── List<Event>        (name, conditions, actions)
-    ├── Condition  (type: ConditionType name, value)
+    ├── Condition  (type: ConditionType name, value, caseSensitive)
     └── Action     (type: ActionType name, value)
 ```
 
 All classes use Lombok `@Data` + `@NoArgsConstructor` + `@AllArgsConstructor`. Gson serialization uses `@SerializedName`.
 
 `DataStore` exposes `static final GSON` (plain) and `GSON_PRETTY` (pretty-printed) — use `fromJson` / `toJson` methods, don't create Gson instances elsewhere.
+
+## Device connections
+
+`serial/DeviceConnectionManager.java` manages one `SerialHandler` per `DataStore.Device` using an `IdentityHashMap` (keyed on object identity so in-place edits are reflected automatically).
+
+- `connect(device)` / `disconnect(device)` — toggle a specific device
+- `getStatus(device)` — returns the current `ConnectionStatus`
+- `unregister(device)` — disconnect and remove (call on delete)
+- `autoConnectAll(devices)` — called on startup; connects devices with `autoConnect = true`
+- `disconnectAll()` — called on shutdown
 
 ## StorageProvider
 

@@ -15,8 +15,9 @@ import java.util.List;
  * <p>
  * The object graph mirrors the {@code storage.json} structure exactly:
  * <ul>
- *   <li>{@link Settings} — generic, event-processing, and device configuration</li>
+ *   <li>{@link Settings} — generic and event-processing configuration</li>
  *   <li>{@link Actions} — saved webhook and program definitions</li>
+ *   <li>devices list — ordered list of named {@link Device} entries</li>
  *   <li>events list — ordered list of named {@link Event} entries</li>
  * </ul>
  * Serialization is handled by {@link #fromJson} / {@link #toJson}; all field names
@@ -34,6 +35,9 @@ public class DataStore {
     @SerializedName("actions")
     private Actions actions = new Actions();
 
+    @SerializedName("devices")
+    private List<Device> devices = new ArrayList<>();
+
     @SerializedName("events")
     private List<Event> events = new ArrayList<>();
 
@@ -48,9 +52,6 @@ public class DataStore {
         @SerializedName("event")
         private Event event = new Event();
 
-        @SerializedName("device")
-        private Device device = new Device();
-
         @Data
         @NoArgsConstructor
         @AllArgsConstructor
@@ -58,9 +59,6 @@ public class DataStore {
 
             @SerializedName("start_hidden")
             private boolean startHidden;
-
-            @SerializedName("auto_connect")
-            private boolean autoConnect;
 
         }
 
@@ -80,29 +78,45 @@ public class DataStore {
 
         }
 
-        @Data
-        @NoArgsConstructor
-        @AllArgsConstructor
-        public static class Device {
+    }
 
-            @SerializedName("port")
-            private String port;
+    /**
+     * A serial device configuration entry — name, port, serial parameters, and auto-connect flag.
+     * <p>
+     * Stored in the top-level {@code devices} list in {@code storage.json}.
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Device implements Named {
 
-            @SerializedName("baud_rate")
-            private int baudRate;
+        @SerializedName("name")
+        private String name;
 
-            @SerializedName("data_bits")
-            private int dataBits;
+        @SerializedName("port")
+        private String port;
 
-            @SerializedName("stop_bits")
-            private int stopBits;
+        @SerializedName("baud_rate")
+        private int baudRate;
 
-            @SerializedName("parity")
-            private String parity;
+        @SerializedName("data_bits")
+        private int dataBits;
 
-            @SerializedName("flow_control")
-            private String flowControl;
+        @SerializedName("stop_bits")
+        private int stopBits;
 
+        @SerializedName("parity")
+        private String parity;
+
+        @SerializedName("flow_control")
+        private String flowControl;
+
+        @SerializedName("auto_connect")
+        private boolean autoConnect;
+
+        /** Returns a fully independent deep copy of this device. */
+        public Device deepCopy() {
+            return new Device(name, port, baudRate, dataBits, stopBits, parity, flowControl, autoConnect);
         }
 
     }

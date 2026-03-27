@@ -5,6 +5,7 @@ import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.gui.dialog.AboutDialog;
 import fi.natroutter.baudbound.gui.dialog.SettingsDialog;
 import fi.natroutter.baudbound.gui.dialog.StatesDialog;
+import fi.natroutter.baudbound.gui.dialog.device.DevicesDialog;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import imgui.ImGui;
@@ -18,11 +19,12 @@ import imgui.ImGui;
  */
 public class MenuBar {
 
-    private final AboutDialog aboutDialog = BaudBound.getAboutDialog();
+    private final AboutDialog aboutDialog       = BaudBound.getAboutDialog();
     private final SettingsDialog settingsDialog = BaudBound.getSettingsDialog();
+    private final DevicesDialog devicesDialog   = BaudBound.getDevicesDialog();
     private final WebhooksDialog webhooksDialog = BaudBound.getWebhooksDialog();
-    private final ProgramsDialog programDialog = BaudBound.getProgramsDialog();
-    private final StatesDialog statesDialog = BaudBound.getStatesDialog();
+    private final ProgramsDialog programDialog  = BaudBound.getProgramsDialog();
+    private final StatesDialog statesDialog     = BaudBound.getStatesDialog();
 
 
     public void render() {
@@ -31,8 +33,8 @@ public class MenuBar {
                 settingsDialog.show();
             }
 
-            if (ImGui.menuItem("States")) {
-                statesDialog.show();
+            if (ImGui.menuItem("Devices")) {
+                devicesDialog.show();
             }
 
             if (ImGui.beginMenu("Actions")) {
@@ -43,6 +45,10 @@ public class MenuBar {
                     programDialog.show();
                 }
                 ImGui.endMenu();
+            }
+
+            if (ImGui.menuItem("States")) {
+                statesDialog.show();
             }
 
             if (ImGui.beginMenu("Help")) {

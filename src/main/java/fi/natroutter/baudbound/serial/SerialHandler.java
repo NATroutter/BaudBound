@@ -7,22 +7,23 @@ import fi.natroutter.baudbound.enums.FlowControl;
 import fi.natroutter.baudbound.enums.Parity;
 import fi.natroutter.baudbound.event.EventHandler;
 import fi.natroutter.baudbound.storage.DataStore;
-import fi.natroutter.baudbound.storage.StorageProvider;
 import fi.natroutter.foxlib.logger.FoxLogger;
 import lombok.Getter;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * Manages the serial port lifecycle: connecting, reading, and disconnecting.
+ * Manages the serial port lifecycle for a single {@link DataStore.Device}: connecting, reading,
+ * and disconnecting.
  * <p>
  * On connection a virtual-thread read loop ({@link #readLoop}) continuously polls the port,
  * accumulates bytes into a line buffer, and dispatches complete lines to
  * {@link EventHandler#process}. Disconnection from either end sets
- * {@code status} to {@link ConnectionStatus#NO_DEVICE} and, when auto-connect is enabled,
- * starts a background retry loop ({@link #startReconnectLoop}) that attempts
- * to reconnect every 5 seconds.
+ * {@code status} to {@link ConnectionStatus#NO_DEVICE} and, when the device's
+ * {@code autoConnect} flag is set, starts a background retry loop
+ * ({@link #startReconnectLoop}) that attempts to reconnect every 5 seconds.
  * <p>
  * {@code status} is {@code volatile} so that the GLFW render thread can read it safely
  * without synchronization.
@@ -30,9 +31,9 @@ import java.util.List;
 public class SerialHandler {
 
     private final FoxLogger logger = BaudBound.getLogger();
-    private final StorageProvider storage = BaudBound.getStorageProvider();
     private final EventHandler eventHandler = BaudBound.getEventHandler();
 
+    private final DataStore.Device device;
 
     @Getter
     private volatile ConnectionStatus status = ConnectionStatus.DISCONNECTED;
@@ -41,15 +42,18 @@ public class SerialHandler {
     private SerialPort port;
     private Thread listenerThread;
 
-    public SerialHandler() {
+    /**
+     * Creates a handler for the given device. Auto-connect (if configured) is triggered
+     * externally by {@link DeviceConnectionManager}.
+     *
+     * @param device the device configuration to use for this connection
+     */
+    public SerialHandler(DataStore.Device device) {
+        this.device = device;
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             shuttingDown = true;
             disconnect();
         }));
-
-        if (storage.getData().getSettings().getGeneric().isAutoConnect()) {
-            connect();
-        }
     }
 
     /**
@@ -60,11 +64,9 @@ public class SerialHandler {
     public void connect() {
         if (status == ConnectionStatus.CONNECTED) return;
 
-        DataStore.Settings.Device device = storage.getData().getSettings().getDevice();
-
         if (device.getPort() == null || device.getPort().isBlank()) {
             status = ConnectionStatus.NO_DEVICE;
-            logger.error("No port configured.");
+            logger.error("[" + device.getName() + "] No port configured.");
             return;
         }
 
@@ -78,7 +80,7 @@ public class SerialHandler {
                 Parity parity = Parity.valueOf(device.getParity());
                 port.setParity(parity.getBit());
             } catch (IllegalArgumentException e) {
-                logger.error("Unknown parity value: " + device.getParity());
+                logger.error("[" + device.getName() + "] Unknown parity value: " + device.getParity());
             }
         }
 
@@ -87,7 +89,7 @@ public class SerialHandler {
                 FlowControl flowControl = FlowControl.valueOf(device.getFlowControl());
                 port.setFlowControl(flowControl.getBit());
             } catch (IllegalArgumentException e) {
-                logger.error("Unknown flow control value: " + device.getFlowControl());
+                logger.error("[" + device.getName() + "] Unknown flow control value: " + device.getFlowControl());
             }
         }
 
@@ -95,12 +97,12 @@ public class SerialHandler {
 
         if (!port.openPort()) {
             status = ConnectionStatus.FAILED_TO_CONNECT;
-            logger.error("Failed to open port: " + device.getPort());
+            logger.error("[" + device.getName() + "] Failed to open port: " + device.getPort());
             return;
         }
 
         status = ConnectionStatus.CONNECTED;
-        logger.info("Connected to " + device.getPort());
+        logger.info("[" + device.getName() + "] Connected to " + device.getPort());
 
         listenerThread = Thread.ofVirtual().start(this::readLoop);
     }
@@ -124,7 +126,7 @@ public class SerialHandler {
             port = null;
         }
 
-        logger.info("Disconnected from serial port.");
+        logger.info("[" + device.getName() + "] Disconnected from serial port.");
     }
 
     // -------------------------------------------------------------------------
@@ -168,7 +170,7 @@ public class SerialHandler {
                 }
             } catch (Exception e) {
                 if (!shuttingDown && status == ConnectionStatus.CONNECTED) {
-                    logger.error("Serial read error: " + e.getMessage());
+                    logger.error("[" + device.getName() + "] Serial read error: " + e.getMessage());
                     status = ConnectionStatus.FAILED_TO_CONNECT;
                 }
                 break;
@@ -177,9 +179,7 @@ public class SerialHandler {
 
         cleanupPort();
 
-        if (!shuttingDown
-                && status == ConnectionStatus.NO_DEVICE
-                && storage.getData().getSettings().getGeneric().isAutoConnect()) {
+        if (!shuttingDown && status == ConnectionStatus.NO_DEVICE && device.isAutoConnect()) {
             startReconnectLoop();
         }
     }
@@ -190,13 +190,13 @@ public class SerialHandler {
     }
 
     private void processCompleteLine(String line) {
-        logger.info("Serial input: " + line);
-        eventHandler.process(line);
+        logger.info("[" + device.getName() + "] Serial input: " + line);
+        eventHandler.process(line, device);
     }
 
     private void handleUnexpectedDisconnect(String message) {
         if (!shuttingDown && status == ConnectionStatus.CONNECTED) {
-            logger.error(message);
+            logger.error("[" + device.getName() + "] " + message);
             status = ConnectionStatus.NO_DEVICE;
         }
     }
@@ -211,7 +211,7 @@ public class SerialHandler {
 
     private void startReconnectLoop() {
         Thread.ofVirtual().start(() -> {
-            logger.info("Auto-reconnect enabled — retrying every 5 seconds...");
+            logger.info("[" + device.getName() + "] Auto-reconnect enabled — retrying every 5 seconds...");
             while (status == ConnectionStatus.NO_DEVICE) {
                 try {
                     Thread.sleep(5000);
@@ -220,10 +220,23 @@ public class SerialHandler {
                     break;
                 }
                 if (status != ConnectionStatus.NO_DEVICE) break;
-                logger.info("Attempting to reconnect...");
+                logger.info("[" + device.getName() + "] Attempting to reconnect...");
                 connect();
             }
         });
+    }
+
+    /**
+     * Writes {@code data} to the open serial port.
+     * Returns {@code true} if all bytes were written successfully, {@code false} if the port
+     * is not connected or the write fails.
+     *
+     * @param data the string to send; no line ending is appended automatically
+     */
+    public boolean send(String data) {
+        if (status != ConnectionStatus.CONNECTED || port == null || !port.isOpen()) return false;
+        byte[] bytes = data.getBytes(StandardCharsets.UTF_8);
+        return port.writeBytes(bytes, bytes.length) == bytes.length;
     }
 
     /**
@@ -231,12 +244,8 @@ public class SerialHandler {
      *
      * @return a list of available ports, or an empty list if none are found
      */
-    public List<SerialPort> getDevices() {
+    public static List<SerialPort> getAvailablePorts() {
         SerialPort[] ports = SerialPort.getCommPorts();
-        if (ports.length == 0) {
-            logger.error("No serial ports found");
-            return List.of();
-        }
-        return Arrays.asList(ports);
+        return ports.length == 0 ? List.of() : Arrays.asList(ports);
     }
 }

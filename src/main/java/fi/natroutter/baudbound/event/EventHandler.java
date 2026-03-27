@@ -4,6 +4,7 @@ import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.ActionType;
 import fi.natroutter.baudbound.enums.ConditionType;
 import fi.natroutter.baudbound.http.HttpHandler;
+import fi.natroutter.baudbound.serial.DeviceConnectionManager;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import fi.natroutter.foxlib.FoxLib;
@@ -44,6 +45,7 @@ public class EventHandler {
 
     private final FoxLogger logger = BaudBound.getLogger();
     private final StorageProvider storage = BaudBound.getStorageProvider();
+    private final DeviceConnectionManager deviceConnectionManager = BaudBound.getDeviceConnectionManager();
 
     /**
      * Named state map. Keys are state names; the special name {@value DEFAULT_STATE} is
@@ -89,9 +91,11 @@ public class EventHandler {
      * Respects the {@code runFirstOnly}, {@code conditionEventsFirst}, and
      * {@code skipEmptyConditions} settings from {@link DataStore.Settings.Event}.
      *
-     * @param input the trimmed line read from the serial port
+     * @param input  the trimmed line read from the serial port
+     * @param device the device that produced this input,
+     *               used to evaluate {@link ConditionType#DEVICE_EQUALS} conditions
      */
-    public void process(String input) {
+    public void process(String input, DataStore.Device device) {
 
         DataStore data = storage.getData();
         DataStore.Settings.Event eventSettings = data.getSettings().getEvent();
@@ -114,7 +118,7 @@ public class EventHandler {
             boolean hasConditions = event.getConditions() != null && !event.getConditions().isEmpty();
             if (skipEmpty && !hasConditions) continue;
 
-            if (matchesConditions(event, input)) {
+            if (matchesConditions(event, input, device)) {
                 fireAction(event, input);
                 if (runFirstOnly) break;
             }
@@ -125,7 +129,7 @@ public class EventHandler {
      * Returns {@code true} if every condition in the event is satisfied by {@code input}.
      * An event with no conditions always matches.
      */
-    private boolean matchesConditions(DataStore.Event event, String input) {
+    private boolean matchesConditions(DataStore.Event event, String input, DataStore.Device device) {
         List<DataStore.Event.Condition> conditions = event.getConditions();
         if (conditions == null || conditions.isEmpty()) return true;
 
@@ -163,6 +167,7 @@ public class EventHandler {
                     String v = states.get(name);
                     yield v == null || v.isBlank();
                 }
+                case DEVICE_EQUALS -> device != null && device.getName() != null && device.getName().equalsIgnoreCase(value);
             };
 
             if (!matches) return false;
@@ -214,6 +219,7 @@ public class EventHandler {
                         case WRITE_TO_FILE     -> writeToFile(value, input);
                         case APPEND_TO_FILE    -> appendToFile(value, input);
                         case PLAY_SOUND        -> playSound(value);
+                        case SEND_TO_DEVICE    -> sendToDevice(value, input);
                         default                -> logger.error("Unhandled action type: " + type);
                     }
                 } catch (Exception e) {
@@ -376,6 +382,27 @@ public class EventHandler {
         clip.addLineListener(e -> { if (e.getType() == LineEvent.Type.STOP) clip.close(); });
         clip.start();
         logger.info("Playing sound: " + filePath);
+    }
+
+    /**
+     * Value format: {@code "deviceName|data"}.
+     * Resolves {@code {input}} / {@code {timestamp}} in the data portion before sending.
+     */
+    private void sendToDevice(String value, String input) {
+        if (value == null || value.isBlank()) return;
+        String[] parts = value.split("\\|", 2);
+        if (parts.length < 2) {
+            logger.error("Send to Device: value must be 'deviceName|data'.");
+            return;
+        }
+        String deviceName = parts[0].trim();
+        String data = resolve(parts[1], input);
+        boolean sent = deviceConnectionManager.sendToDevice(deviceName, data);
+        if (sent) {
+            logger.info("Sent to device \"" + deviceName + "\": " + data);
+        } else {
+            logger.error("Send to Device: device \"" + deviceName + "\" is not connected or not found.");
+        }
     }
 
     // -------------------------------------------------------------------------

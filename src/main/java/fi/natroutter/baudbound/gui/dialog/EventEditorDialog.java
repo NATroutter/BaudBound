@@ -45,17 +45,19 @@ public class EventEditorDialog extends BaseDialog {
     private final ImString fieldName = new ImString();
 
     // Conditions
-    private final List<ImString[]> fieldConditions          = new ArrayList<>();
-    private final List<ImInt>      fieldConditionTypeIndices       = new ArrayList<>();
-    private final List<ImBoolean>  fieldConditionCaseSensitive   = new ArrayList<>();
+    private final List<ImString[]> fieldConditions                = new ArrayList<>();
+    private final List<ImInt>      fieldConditionTypeIndices      = new ArrayList<>();
+    private final List<ImBoolean>  fieldConditionCaseSensitive    = new ArrayList<>();
+    private final List<ImInt>      fieldConditionDeviceIndices    = new ArrayList<>();
 
     // Actions
-    private final List<ImInt>    fieldActionTypes      = new ArrayList<>();
+    private final List<ImInt>    fieldActionTypes        = new ArrayList<>();
     private final List<ImInt>    fieldActionComboIndices = new ArrayList<>();
-    private final List<ImString> fieldActionValues  = new ArrayList<>();
+    private final List<ImString> fieldActionValues       = new ArrayList<>();
 
     private String[] webhookNames = {};
     private String[] programNames = {};
+    private String[] deviceNames  = {};
 
     private DialogMode mode = DialogMode.CREATE;
     private DataStore.Event editing = null;
@@ -71,10 +73,13 @@ public class EventEditorDialog extends BaseDialog {
                 .map(DataStore.Actions.Webhook::getName).toArray(String[]::new);
         programNames = storage.getData().getActions().getPrograms().stream()
                 .map(DataStore.Actions.Program::getName).toArray(String[]::new);
+        deviceNames = storage.getData().getDevices().stream()
+                .map(DataStore.Device::getName).toArray(String[]::new);
 
         fieldConditions.clear();
         fieldConditionTypeIndices.clear();
         fieldConditionCaseSensitive.clear();
+        fieldConditionDeviceIndices.clear();
         fieldActionTypes.clear();
         fieldActionComboIndices.clear();
         fieldActionValues.clear();
@@ -85,11 +90,20 @@ public class EventEditorDialog extends BaseDialog {
 
             if (event.getConditions() != null) {
                 for (DataStore.Event.Condition c : event.getConditions()) {
+                    ConditionType condType = ConditionType.getByName(c.getType());
                     ImString val = new ImString(256);
                     val.set(c.getValue() != null ? c.getValue() : "");
                     fieldConditions.add(new ImString[]{new ImString(128), val});
                     fieldConditionTypeIndices.add(new ImInt(ConditionType.findIndex(c.getType())));
                     fieldConditionCaseSensitive.add(new ImBoolean(c.isCaseSensitive()));
+
+                    int deviceIdx = 0;
+                    if (condType == ConditionType.DEVICE_EQUALS && c.getValue() != null) {
+                        for (int i = 0; i < deviceNames.length; i++) {
+                            if (deviceNames[i].equalsIgnoreCase(c.getValue())) { deviceIdx = i; break; }
+                        }
+                    }
+                    fieldConditionDeviceIndices.add(new ImInt(deviceIdx));
                 }
             }
 
@@ -115,6 +129,16 @@ public class EventEditorDialog extends BaseDialog {
                         case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
                              SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
                              PLAY_SOUND, SET_STATE, CLEAR_STATE -> textVal.set(a.getValue() != null ? a.getValue() : "");
+                        case SEND_TO_DEVICE -> {
+                            // value format: "deviceName|data"
+                            String[] sdParts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
+                            if (sdParts.length >= 1) {
+                                for (int i = 0; i < deviceNames.length; i++) {
+                                    if (deviceNames[i].equals(sdParts[0].trim())) { comboVal.set(i); break; }
+                                }
+                            }
+                            textVal.set(sdParts.length == 2 ? sdParts[1] : "");
+                        }
                     }
                     fieldActionComboIndices.add(comboVal);
                     fieldActionValues.add(textVal);
@@ -163,6 +187,7 @@ public class EventEditorDialog extends BaseDialog {
                 fieldConditions.add(new ImString[]{new ImString(128), new ImString(256)});
                 fieldConditionTypeIndices.add(new ImInt(0));
                 fieldConditionCaseSensitive.add(new ImBoolean(false));
+                fieldConditionDeviceIndices.add(new ImInt(0));
             }
 
             ImGui.spacing();
@@ -251,6 +276,13 @@ public class EventEditorDialog extends BaseDialog {
         ImGui.bulletText("Value: name - clears the named state 'name'.");
         ImGui.bulletText("Must match the name used in Set State (name|value format).");
 
+        ImGui.spacing();
+        ImGui.text("Send to Device:");
+        ImGui.bulletText("Sends data to a connected serial device.");
+        ImGui.bulletText("Select the target device, then enter the data to send.");
+        ImGui.bulletText("{input} and {timestamp} can be used in the data field.");
+        ImGui.bulletText("No line ending is appended automatically.");
+
         ImGui.endDisabled();
 
         ImGui.spacing();
@@ -303,9 +335,17 @@ public class EventEditorDialog extends BaseDialog {
 
                 ImGui.tableSetColumnIndex(1);
                 ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                ImGui.beginDisabled(noValue);
-                ImGui.inputText("##cval" + i, fieldConditions.get(i)[1]);
-                ImGui.endDisabled();
+                if (condType == ConditionType.DEVICE_EQUALS) {
+                    if (deviceNames.length > 0) {
+                        ImGui.combo("##cdev" + i, fieldConditionDeviceIndices.get(i), deviceNames);
+                    } else {
+                        ImGui.textDisabled("No devices");
+                    }
+                } else {
+                    ImGui.beginDisabled(noValue);
+                    ImGui.inputText("##cval" + i, fieldConditions.get(i)[1]);
+                    ImGui.endDisabled();
+                }
 
                 ImGui.tableSetColumnIndex(2);
                 ImGui.beginDisabled(noCase);
@@ -339,16 +379,19 @@ public class EventEditorDialog extends BaseDialog {
             fieldConditions.remove(removeIndex);
             fieldConditionTypeIndices.remove(removeIndex);
             fieldConditionCaseSensitive.remove(removeIndex);
+            fieldConditionDeviceIndices.remove(removeIndex);
         }
         if (moveUpIndex > 0) {
             Collections.swap(fieldConditions, moveUpIndex, moveUpIndex - 1);
             Collections.swap(fieldConditionTypeIndices, moveUpIndex, moveUpIndex - 1);
             Collections.swap(fieldConditionCaseSensitive, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldConditionDeviceIndices, moveUpIndex, moveUpIndex - 1);
         }
         if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
             Collections.swap(fieldConditions, moveDownIndex, moveDownIndex + 1);
             Collections.swap(fieldConditionTypeIndices, moveDownIndex, moveDownIndex + 1);
             Collections.swap(fieldConditionCaseSensitive, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldConditionDeviceIndices, moveDownIndex, moveDownIndex + 1);
         }
     }
 
@@ -397,6 +440,21 @@ public class EventEditorDialog extends BaseDialog {
                         } else {
                             ImGui.textDisabled("No programs");
                         }
+                    }
+                    case SEND_TO_DEVICE -> {
+                        float avail = ImGui.getContentRegionAvailX();
+                        float comboW = avail * 0.4f;
+                        ImGui.setNextItemWidth(comboW);
+                        if (deviceNames.length > 0) {
+                            ImGui.combo("##adev" + i, fieldActionComboIndices.get(i), deviceNames);
+                        } else {
+                            ImGui.beginDisabled();
+                            ImGui.combo("##adev" + i, fieldActionComboIndices.get(i), new String[]{"No devices"});
+                            ImGui.endDisabled();
+                        }
+                        ImGui.sameLine();
+                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                        ImGui.inputText("##atext" + i, fieldActionValues.get(i));
                     }
                     case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
                          SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
@@ -486,6 +544,9 @@ public class EventEditorDialog extends BaseDialog {
                 case STATE_EQUALS -> {
                     if (val.isEmpty()) return label + "value cannot be empty.";
                 }
+                case DEVICE_EQUALS -> {
+                    if (deviceNames.length == 0) return label + "no devices configured.";
+                }
             }
         }
         return null;
@@ -495,8 +556,14 @@ public class EventEditorDialog extends BaseDialog {
     private List<DataStore.Event.Condition> buildConditions() {
         List<DataStore.Event.Condition> conditions = new ArrayList<>();
         for (int i = 0; i < fieldConditions.size(); i++) {
-            String typeName = ConditionType.values()[fieldConditionTypeIndices.get(i).get()].name();
-            String value = fieldConditions.get(i)[1].get().trim();
+            ConditionType condType = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
+            String typeName = condType.name();
+            String value;
+            if (condType == ConditionType.DEVICE_EQUALS) {
+                value = deviceNames.length > 0 ? deviceNames[fieldConditionDeviceIndices.get(i).get()] : "";
+            } else {
+                value = fieldConditions.get(i)[1].get().trim();
+            }
             boolean caseSensitive = fieldConditionCaseSensitive.get(i).get();
             conditions.add(new DataStore.Event.Condition(typeName, value, caseSensitive));
         }
@@ -514,6 +581,9 @@ public class EventEditorDialog extends BaseDialog {
             String value = switch (actionType) {
                 case CALL_WEBHOOK -> webhookNames.length > 0 ? webhookNames[fieldActionComboIndices.get(i).get()] : null;
                 case OPEN_PROGRAM -> programNames.length > 0 ? programNames[fieldActionComboIndices.get(i).get()] : null;
+                case SEND_TO_DEVICE -> deviceNames.length > 0
+                        ? deviceNames[fieldActionComboIndices.get(i).get()] + "|" + fieldActionValues.get(i).get().trim()
+                        : null;
                 case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
                      SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
                      PLAY_SOUND, SET_STATE, CLEAR_STATE -> fieldActionValues.get(i).get().trim();

@@ -1,17 +1,12 @@
 package fi.natroutter.baudbound.gui;
 
-import fi.natroutter.baudbound.enums.ConnectionStatus;
-import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
-import fi.natroutter.baudbound.serial.SerialHandler;
 
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.DialogMode;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
-import imgui.ImVec2;
-import imgui.flag.ImGuiCol;
 import imgui.flag.ImGuiCond;
 import imgui.flag.ImGuiStyleVar;
 import imgui.flag.ImGuiWindowFlags;
@@ -23,18 +18,14 @@ import java.util.List;
 /**
  * The primary full-screen window that fills the entire GLFW surface.
  * <p>
- * Renders the event list with Create / Edit / Duplicate / Delete / reorder controls,
- * a Connect / Disconnect button that changes color when connected, and a color-coded
- * status label at the bottom. The menu bar is delegated to {@link MenuBar}.
+ * Renders the event list with Create / Edit / Duplicate / Delete / reorder controls.
+ * The menu bar is delegated to {@link MenuBar}. Device management is in the Devices dialog.
  */
 public class MainWindow {
 
     private final StorageProvider storage = BaudBound.getStorageProvider();
-    private final SerialHandler serialHandler = BaudBound.getSerialHandler();
-
 
     private final ImInt selectedEvent = new ImInt(0);
-
 
     private final List<DataStore.Event> events = storage.getData().getEvents();
 
@@ -56,18 +47,11 @@ public class MainWindow {
 
         ImGui.pushStyleVar(ImGuiStyleVar.WindowRounding, 0.0f);
 
-
-
         if (ImGui.begin("BaudBound", windowFlags)) {
             menuBar.render();
 
-            float itemSpacing = ImGui.getStyle().getItemSpacingY();
-            float lineHeight = ImGui.getTextLineHeightWithSpacing();
-            // spacing + button + spacing + text_line + spacing
-            float bottomReserve = itemSpacing * 4 + GuiTheme.BUTTON_HEIGHT + lineHeight;
-
             GuiHelper.listAndEditorButtons(
-                    "##events", events, selectedEvent, true, bottomReserve,
+                    "##events", events, selectedEvent, true, 0f,
                     ()-> BaudBound.getEventEditorDialog().show(),
                     ()-> BaudBound.getEventEditorDialog().show(DialogMode.EDIT, events.get(selectedEvent.get())),
                     ()-> {
@@ -97,37 +81,9 @@ public class MainWindow {
                     },
                     ()->{}
             );
-
-            ImGui.spacing();
-
-            boolean connected = serialHandler.getStatus() == ConnectionStatus.CONNECTED;
-            if (connected) {
-                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON);
-            }
-            if (ImGui.button(connected ? "Disconnect" : "Connect", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
-                if (connected) {
-                    serialHandler.disconnect();
-                } else {
-                    serialHandler.connect();
-                }
-            }
-            if (connected) {
-                ImGui.popStyleColor();
-            }
-
-            ImGui.spacing();
-
-            ImGui.text("Status:");
-            ImGui.sameLine();
-
-            ConnectionStatus status = serialHandler.getStatus();
-            ImGui.textColored(status.getColor(), status.getStatus());
-
         }
         ImGui.end();
         ImGui.popStyleVar(1);
     }
-
-
 
 }

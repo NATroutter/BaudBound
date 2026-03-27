@@ -1,7 +1,8 @@
 package fi.natroutter.baudbound;
 
 
-import fi.natroutter.baudbound.enums.ConnectionStatus;
+import fi.natroutter.baudbound.gui.dialog.device.DeviceEditorDialog;
+import fi.natroutter.baudbound.gui.dialog.device.DevicesDialog;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.event.EventHandler;
@@ -16,7 +17,7 @@ import fi.natroutter.baudbound.gui.dialog.StatesDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhookEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
-import fi.natroutter.baudbound.serial.SerialHandler;
+import fi.natroutter.baudbound.serial.DeviceConnectionManager;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import fi.natroutter.baudbound.system.SingleInstanceManager;
 import imgui.ImGui;
@@ -41,9 +42,9 @@ import org.lwjgl.glfw.GLFWImage;
  * Application entry point and singleton registry for all major subsystems.
  * <p>
  * Extends imgui-java's {@link Application} to drive the GLFW + ImGui render loop.
- * All singleton services (storage, serial, dialogs) are initialized in {@link #main}
- * before {@link #launch} is called and are accessible via static getters throughout
- * the application.
+ * All singleton services (storage, device connections, dialogs) are initialized in
+ * {@link #main} before {@link #launch} is called and are accessible via static getters
+ * throughout the application.
  * <p>
  * Cross-thread notes:
  * <ul>
@@ -70,10 +71,12 @@ public class BaudBound extends Application {
     @Getter private static FoxLogger logger;
     @Getter private static StorageProvider storageProvider;
     @Getter private static EventHandler eventHandler;
-    @Getter private static SerialHandler serialHandler;
+    @Getter private static DeviceConnectionManager deviceConnectionManager;
     @Getter private static MessageDialog messageDialog;
     @Getter private static AboutDialog aboutDialog;
     @Getter private static SettingsDialog settingsDialog;
+    @Getter private static DevicesDialog devicesDialog;
+    @Getter private static DeviceEditorDialog deviceEditorDialog;
     @Getter private static WebhooksDialog webhooksDialog;
     @Getter private static WebhookEditorDialog webhookEditorDialog;
     @Getter private static ProgramsDialog programsDialog;
@@ -87,8 +90,6 @@ public class BaudBound extends Application {
 
     private volatile boolean pendingShow = false;
     private volatile boolean pendingExit = false;
-    private MenuItem connectMenuItem = null;
-    private ConnectionStatus lastConnectionStatus = null;
 
     public static void main(String[] args) {
 
@@ -107,9 +108,13 @@ public class BaudBound extends Application {
 
         storageProvider = new StorageProvider();
         eventHandler = new EventHandler();
-        serialHandler = new SerialHandler();
+
+        deviceConnectionManager = new DeviceConnectionManager();
+        deviceConnectionManager.autoConnectAll(storageProvider.getData().getDevices());
 
         settingsDialog = new SettingsDialog();
+        devicesDialog = new DevicesDialog();
+        deviceEditorDialog = new DeviceEditorDialog();
         webhooksDialog = new WebhooksDialog();
         webhookEditorDialog = new WebhookEditorDialog();
         programsDialog = new ProgramsDialog();
@@ -148,18 +153,12 @@ public class BaudBound extends Application {
             GLFW.glfwFocusWindow(getHandle());
         }
 
-        if (connectMenuItem != null) {
-            ConnectionStatus currentStatus = serialHandler.getStatus();
-            if (currentStatus != lastConnectionStatus) {
-                lastConnectionStatus = currentStatus;
-                connectMenuItem.setLabel(connectLabel());
-            }
-        }
-
         mainWindow.render();
         messageDialog.render();
         aboutDialog.render();
         settingsDialog.render();
+        devicesDialog.render();
+        deviceEditorDialog.render();
         webhooksDialog.render();
         webhookEditorDialog.render();
         eventEditorDialog.render();
@@ -217,7 +216,7 @@ public class BaudBound extends Application {
     public void dispose() {
         logger.info("Saving storage...");
         storageProvider.save();
-        serialHandler.disconnect();
+        deviceConnectionManager.disconnectAll();
         if (trayIcon != null) {
             SystemTray.getSystemTray().remove(trayIcon);
         }
@@ -237,22 +236,10 @@ public class BaudBound extends Application {
             MenuItem showItem = new MenuItem("Show " + APP_NAME);
             showItem.addActionListener(e -> pendingShow = true);
 
-            connectMenuItem = new MenuItem(connectLabel());
-            connectMenuItem.addActionListener(e -> {
-                if (serialHandler.getStatus() == ConnectionStatus.CONNECTED) {
-                    serialHandler.disconnect();
-                } else {
-                    serialHandler.connect();
-                }
-                connectMenuItem.setLabel(connectLabel());
-            });
-
             MenuItem exitItem = new MenuItem("Exit");
             exitItem.addActionListener(e -> pendingExit = true);
 
             popup.add(showItem);
-            popup.addSeparator();
-            popup.add(connectMenuItem);
             popup.addSeparator();
             popup.add(exitItem);
 
@@ -267,11 +254,6 @@ public class BaudBound extends Application {
             logger.error("Failed to setup system tray: " + e.getMessage());
             trayIcon = null;
         }
-    }
-
-    private String connectLabel() {
-        return serialHandler.getStatus() == ConnectionStatus.CONNECTED
-                ? "Disconnect Device" : "Connect Device";
     }
 
     private Image createFallbackIcon() {

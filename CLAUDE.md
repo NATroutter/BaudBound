@@ -20,8 +20,9 @@ fi.natroutter.baudbound/
 │   └── EnumUtil.java         # Shared getByName / findIndex — delegates here, never copy-paste
 ├── event/EventHandler.java   # Processes serial input, matches conditions, fires actions
 ├── http/HttpHandler.java     # Fires webhook HTTP requests
-├── serial/SerialHandler.java # Connect / disconnect / read loop
-├── storage/                  # DataStore (POJO model) + StorageProvider (load/save)
+├── serial/SerialHandler.java          # Connect / disconnect / read loop (per-device)
+├── serial/DeviceConnectionManager.java # Manages one SerialHandler per DataStore.Device
+├── storage/                           # DataStore (POJO model) + StorageProvider (load/save)
 ├── system/StartupManager.java
 ├── system/ShortcutManager.java
 └── gui/
@@ -34,6 +35,7 @@ fi.natroutter.baudbound/
         ├── MessageDialog.java        # Generic popup (does NOT extend BaseDialog)
         ├── AboutDialog / SettingsDialog / EventEditorDialog
         ├── components/DialogButton.java
+        ├── device/   DevicesDialog, DeviceEditorDialog
         ├── webhook/  WebhooksDialog, WebhookEditorDialog
         └── program/  ProgramsDialog, ProgramEditorDialog
 ```

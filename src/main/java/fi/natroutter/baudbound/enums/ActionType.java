@@ -36,7 +36,9 @@ public enum ActionType {
     /** Set the internal pending-state variable to the given value. */
     SET_STATE("Set State"),
     /** Clear the internal pending-state variable. No value field is used. */
-    CLEAR_STATE("Clear State");
+    CLEAR_STATE("Clear State"),
+    /** Write a command/data string to a connected serial device. */
+    SEND_TO_DEVICE("Send to Device");
 
     private final String friendlyName;
 

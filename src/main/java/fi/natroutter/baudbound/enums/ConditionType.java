@@ -57,7 +57,12 @@ public enum ConditionType {
      * The named state must be unset or blank.
      * Value format: blank (checks the default state) or {@code stateName} (checks a named state).
      */
-    STATE_IS_EMPTY("State Is Empty");
+    STATE_IS_EMPTY("State Is Empty"),
+    /**
+     * The input must have originated from the device whose custom name matches the stored value.
+     * Value: the device's custom name as configured in the Devices dialog.
+     */
+    DEVICE_EQUALS("Device Equals");
 
     private final String friendlyName;
 
@@ -78,7 +83,8 @@ public enum ConditionType {
                 && this != BETWEEN
                 && this != LENGTH_EQUALS
                 && this != STATE_EQUALS
-                && this != STATE_IS_EMPTY;
+                && this != STATE_IS_EMPTY
+                && this != DEVICE_EQUALS;
     }
 
     /** Returns all friendly names as a plain array, suitable for ImGui combo-boxes. */
