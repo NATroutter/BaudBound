@@ -5,6 +5,7 @@ import fi.natroutter.baudbound.enums.ConnectionStatus;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.event.EventHandler;
+import fi.natroutter.foxlib.FoxLib;
 import fi.natroutter.foxlib.logger.FoxLogger;
 import fi.natroutter.baudbound.gui.MainWindow;
 import fi.natroutter.baudbound.gui.dialog.AboutDialog;
@@ -100,7 +101,8 @@ public class BaudBound extends Application {
 
         BaudBound app = new BaudBound();
         if (!SingleInstanceManager.tryAcquire(app::requestShow)) {
-            return;
+            FoxLib.println("{BRIGHT_RED}BaudBound is already running.");
+            System.exit(0);
         }
 
         storageProvider = new StorageProvider();

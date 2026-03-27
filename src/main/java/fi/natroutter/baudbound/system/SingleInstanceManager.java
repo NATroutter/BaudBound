@@ -1,12 +1,9 @@
 package fi.natroutter.baudbound.system;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,99 +11,64 @@ import java.nio.file.Path;
 /**
  * Enforces a single running instance of the application.
  * <p>
- * Detection uses an OS-level {@link FileLock} — no port conflicts possible.
- * IPC uses a loopback socket on an OS-assigned port (port 0), stored in a
- * temp file so the second instance knows where to connect.
+ * Detection uses a temp file containing an OS-assigned loopback port. On
+ * startup, a {@code BAUDBOUND_PING}/{@code BAUDBOUND_PONG} handshake is
+ * attempted on the stored port. Only a live BaudBound instance will respond
+ * correctly, so stale files left after a crash or forced shutdown are
+ * automatically ignored — the OS releases the port when the process dies, and
+ * no other app will speak the protocol.
  * <p>
  * Protocol: second instance sends {@code BAUDBOUND_PING}, first instance
  * replies {@code BAUDBOUND_PONG} then calls {@code onShowRequest}.
- * <p>
- * Crash recovery: if the lock file is stale (held by a dead process after a
- * crash or forced shutdown), the stale files are cleared and the lock is
- * re-acquired so the app starts normally on the next launch.
  */
 public class SingleInstanceManager {
 
-    private static final String PING = "BAUDBOUND_PING";
-    private static final String PONG = "BAUDBOUND_PONG";
-    private static final int TIMEOUT_MS = 500;
+    private static final String PING       = "BAUDBOUND_PING";
+    private static final String PONG       = "BAUDBOUND_PONG";
+    private static final int    TIMEOUT_MS = 500;
 
-    private static final Path LOCK_FILE = Path.of(System.getProperty("java.io.tmpdir"), "baudbound.lock");
-    private static final Path PORT_FILE = Path.of(System.getProperty("java.io.tmpdir"), "baudbound.port");
+    private static final Path PORT_FILE =
+            Path.of(System.getProperty("java.io.tmpdir"), "baudbound.port");
 
-    private static RandomAccessFile lockRaf;
-    private static FileChannel      lockChannel;
-    private static FileLock         fileLock;
-    private static ServerSocket     serverSocket;
+    private static ServerSocket serverSocket;
 
     /**
-     * Tries to acquire the single-instance lock.
+     * Tries to become the single running instance.
      * <p>
-     * If the lock appears stale (held by a dead process after a crash), the
-     * stale files are removed and the lock is re-acquired automatically.
+     * If the stored port responds with the correct handshake, a show-request
+     * signal is sent and this method returns {@code false}. Otherwise (file
+     * absent, port not listening, or wrong response — all indicating no live
+     * instance), this instance binds a loopback socket, writes the port file,
+     * starts the IPC listener, and returns {@code true}.
      *
      * @param onShowRequest called (on a daemon thread) when a second instance starts
-     * @return true if this is the first instance, false if another BaudBound is already running
+     * @return {@code true} if this is the first instance and the app should continue,
+     *         {@code false} if another instance is already running
      */
     public static boolean tryAcquire(Runnable onShowRequest) {
-        if (tryAcquireLock(onShowRequest)) {
-            return true;
+        if (pingRunningInstance()) {
+            return false;
         }
 
-        // Lock held by another process — check if a live BaudBound is running.
-        if (signalRunningInstance()) {
-            return false; // Another live instance acknowledged us.
+        // No live BaudBound instance responded — start as first instance.
+        try {
+            serverSocket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
+            Files.writeString(PORT_FILE, String.valueOf(serverSocket.getLocalPort()));
+            startListener(onShowRequest);
+        } catch (IOException ignored) {
+            // IPC listener failed to bind — not fatal, the app still starts.
         }
 
-        // IPC failed: the lock is stale (left over from a crash or forced shutdown).
-        // Release our partial state, clear the dead files, and try again.
-        release();
-        silentDelete(PORT_FILE);
-        silentDelete(LOCK_FILE);
-
-        if (tryAcquireLock(onShowRequest)) {
-            return true;
-        }
-
-        // Another instance started in the race window between our delete and retry.
-        // Give it a moment to bind its IPC listener, then signal it.
-        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
-        return !signalRunningInstance();
+        return true;
     }
 
     /**
-     * Attempts to acquire the OS-level file lock and start the IPC listener.
-     *
-     * @param onShowRequest forwarded to {@link #startListener}
-     * @return true if the lock was acquired and the IPC server is running
+     * Closes the IPC server socket and removes the port file.
+     * Call this from {@code dispose()} when the application exits normally.
      */
-    private static boolean tryAcquireLock(Runnable onShowRequest) {
-        try {
-            lockRaf     = new RandomAccessFile(LOCK_FILE.toFile(), "rw");
-            lockChannel = lockRaf.getChannel();
-            fileLock    = lockChannel.tryLock();
-
-            if (fileLock != null) {
-                // First instance — bind on an OS-assigned free port and publish it.
-                serverSocket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
-                Files.writeString(PORT_FILE, String.valueOf(serverSocket.getLocalPort()));
-                startListener(onShowRequest);
-                return true;
-            }
-        } catch (IOException ignored) {}
-        return false;
-    }
-
-    /** Deletes a path, silently ignoring any failure. */
-    private static void silentDelete(Path path) {
-        try { Files.deleteIfExists(path); } catch (IOException ignored) {}
-    }
-
     public static void release() {
-        try { if (serverSocket  != null) serverSocket.close();  } catch (IOException ignored) {}
-        try { if (fileLock      != null) fileLock.release();    } catch (IOException ignored) {}
-        try { if (lockChannel   != null) lockChannel.close();   } catch (IOException ignored) {}
-        try { if (lockRaf       != null) lockRaf.close();       } catch (IOException ignored) {}
+        try { if (serverSocket != null) serverSocket.close(); } catch (IOException ignored) {}
+        try { Files.deleteIfExists(PORT_FILE); } catch (IOException ignored) {}
     }
 
     // -------------------------------------------------------------------------
@@ -128,7 +90,12 @@ public class SingleInstanceManager {
         t.start();
     }
 
-    private static boolean signalRunningInstance() {
+    /**
+     * Reads the port file and attempts the PING/PONG handshake.
+     *
+     * @return {@code true} if a live BaudBound instance acknowledged the ping
+     */
+    private static boolean pingRunningInstance() {
         try {
             int port = Integer.parseInt(Files.readString(PORT_FILE).trim());
             try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
