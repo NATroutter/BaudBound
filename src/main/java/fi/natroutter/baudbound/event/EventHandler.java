@@ -156,18 +156,26 @@ public class EventHandler {
                 case LESS_THAN       -> compareNumeric(input, value) < 0;
                 case BETWEEN         -> isBetween(input, value);
                 case LENGTH_EQUALS   -> parseLengthEquals(input, value);
-                case STATE_EQUALS -> {
+                case STATE_EQUALS, STATE_NOT_EQUALS -> {
                     String[] p = value.split("\\|", 2);
-                    yield p.length == 2
+                    boolean eq = p.length == 2
                             ? p[1].equals(states.get(p[0].trim()))
                             : value.equals(states.get(DEFAULT_STATE));
+                    yield type == ConditionType.STATE_EQUALS ? eq : !eq;
                 }
                 case STATE_IS_EMPTY -> {
                     String name = value.isBlank() ? DEFAULT_STATE : value.trim();
                     String v = states.get(name);
                     yield v == null || v.isBlank();
                 }
-                case DEVICE_EQUALS -> device != null && device.getName() != null && device.getName().equalsIgnoreCase(value);
+                case DEVICE_EQUALS, DEVICE_NOT_EQUALS -> {
+                    if (device == null || device.getName() == null) yield false;
+                    boolean matched = false;
+                    for (String part : value.split(",")) {
+                        if (part.trim().equalsIgnoreCase(device.getName())) { matched = true; break; }
+                    }
+                    yield type == ConditionType.DEVICE_EQUALS ? matched : !matched;
+                }
             };
 
             if (!matches) return false;

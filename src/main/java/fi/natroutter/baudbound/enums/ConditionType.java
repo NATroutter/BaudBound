@@ -54,15 +54,26 @@ public enum ConditionType {
      */
     STATE_EQUALS("State Equals"),
     /**
+     * The named state must NOT equal the expected value.
+     * Value format: {@code expectedValue} (checks the default state) or
+     * {@code stateName|expectedValue} (checks a named state).
+     */
+    STATE_NOT_EQUALS("State Not Equals"),
+    /**
      * The named state must be unset or blank.
      * Value format: blank (checks the default state) or {@code stateName} (checks a named state).
      */
     STATE_IS_EMPTY("State Is Empty"),
     /**
      * The input must have originated from the device whose custom name matches the stored value.
-     * Value: the device's custom name as configured in the Devices dialog.
+     * Value: comma-separated device custom names as configured in the Devices dialog.
      */
-    DEVICE_EQUALS("Device Equals");
+    DEVICE_EQUALS("Device Equals"),
+    /**
+     * The input must NOT have originated from any of the listed devices.
+     * Value: comma-separated device custom names as configured in the Devices dialog.
+     */
+    DEVICE_NOT_EQUALS("Device Not Equals");
 
     private final String friendlyName;
 
@@ -83,8 +94,10 @@ public enum ConditionType {
                 && this != BETWEEN
                 && this != LENGTH_EQUALS
                 && this != STATE_EQUALS
+                && this != STATE_NOT_EQUALS
                 && this != STATE_IS_EMPTY
-                && this != DEVICE_EQUALS;
+                && this != DEVICE_EQUALS
+                && this != DEVICE_NOT_EQUALS;
     }
 
     /** Returns all friendly names as a plain array, suitable for ImGui combo-boxes. */

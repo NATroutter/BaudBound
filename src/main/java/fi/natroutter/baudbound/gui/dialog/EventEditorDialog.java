@@ -48,12 +48,15 @@ public class EventEditorDialog extends BaseDialog {
     private final List<ImString[]> fieldConditions                = new ArrayList<>();
     private final List<ImInt>      fieldConditionTypeIndices      = new ArrayList<>();
     private final List<ImBoolean>  fieldConditionCaseSensitive    = new ArrayList<>();
-    private final List<ImInt>      fieldConditionDeviceIndices    = new ArrayList<>();
+    private final List<ImBoolean[]> fieldConditionDeviceSelections = new ArrayList<>();
 
     // Actions
-    private final List<ImInt>    fieldActionTypes        = new ArrayList<>();
-    private final List<ImInt>    fieldActionComboIndices = new ArrayList<>();
-    private final List<ImString> fieldActionValues       = new ArrayList<>();
+    private final List<ImInt>    fieldActionTypes            = new ArrayList<>();
+    private final List<ImInt>    fieldActionComboIndices     = new ArrayList<>();
+    private final List<ImString> fieldActionValues           = new ArrayList<>();
+    private final List<ImString> fieldActionSecondaryValues  = new ArrayList<>();
+
+    private static final String[] NOTIFICATION_TYPES = {"INFO", "WARNING", "ERROR", "NONE"};
 
     private String[] webhookNames = {};
     private String[] programNames = {};
@@ -79,10 +82,11 @@ public class EventEditorDialog extends BaseDialog {
         fieldConditions.clear();
         fieldConditionTypeIndices.clear();
         fieldConditionCaseSensitive.clear();
-        fieldConditionDeviceIndices.clear();
+        fieldConditionDeviceSelections.clear();
         fieldActionTypes.clear();
         fieldActionComboIndices.clear();
         fieldActionValues.clear();
+        fieldActionSecondaryValues.clear();
 
         if (dialogMode == DialogMode.EDIT && event != null) {
             this.editing = event;
@@ -91,19 +95,30 @@ public class EventEditorDialog extends BaseDialog {
             if (event.getConditions() != null) {
                 for (DataStore.Event.Condition c : event.getConditions()) {
                     ConditionType condType = ConditionType.getByName(c.getType());
+                    ImString stateName = new ImString(128);
                     ImString val = new ImString(256);
-                    val.set(c.getValue() != null ? c.getValue() : "");
-                    fieldConditions.add(new ImString[]{new ImString(128), val});
+                    if ((condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS) && c.getValue() != null) {
+                        String[] parts = c.getValue().split("\\|", 2);
+                        if (parts.length == 2) { stateName.set(parts[0].trim()); val.set(parts[1]); }
+                        else { val.set(c.getValue()); }
+                    } else {
+                        val.set(c.getValue() != null ? c.getValue() : "");
+                    }
+                    fieldConditions.add(new ImString[]{stateName, val});
                     fieldConditionTypeIndices.add(new ImInt(ConditionType.findIndex(c.getType())));
                     fieldConditionCaseSensitive.add(new ImBoolean(c.isCaseSensitive()));
 
-                    int deviceIdx = 0;
-                    if (condType == ConditionType.DEVICE_EQUALS && c.getValue() != null) {
-                        for (int i = 0; i < deviceNames.length; i++) {
-                            if (deviceNames[i].equalsIgnoreCase(c.getValue())) { deviceIdx = i; break; }
+                    ImBoolean[] deviceSel = new ImBoolean[deviceNames.length];
+                    for (int j = 0; j < deviceNames.length; j++) deviceSel[j] = new ImBoolean(false);
+                    if ((condType == ConditionType.DEVICE_EQUALS || condType == ConditionType.DEVICE_NOT_EQUALS) && c.getValue() != null) {
+                        for (String part : c.getValue().split(",")) {
+                            String name = part.trim();
+                            for (int j = 0; j < deviceNames.length; j++) {
+                                if (deviceNames[j].equalsIgnoreCase(name)) { deviceSel[j].set(true); break; }
+                            }
                         }
                     }
-                    fieldConditionDeviceIndices.add(new ImInt(deviceIdx));
+                    fieldConditionDeviceSelections.add(deviceSel);
                 }
             }
 
@@ -115,6 +130,7 @@ public class EventEditorDialog extends BaseDialog {
 
                     ImInt comboVal = new ImInt(0);
                     ImString textVal = new ImString(512);
+                    ImString secondaryVal = new ImString(512);
                     switch (actionType) {
                         case CALL_WEBHOOK -> {
                             for (int i = 0; i < webhookNames.length; i++) {
@@ -126,22 +142,46 @@ public class EventEditorDialog extends BaseDialog {
                                 if (programNames[i].equals(a.getValue())) { comboVal.set(i); break; }
                             }
                         }
-                        case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                             SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
-                             PLAY_SOUND, SET_STATE, CLEAR_STATE -> textVal.set(a.getValue() != null ? a.getValue() : "");
+                        case SHOW_NOTIFICATION -> {
+                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
+                            if (parts.length == 2) {
+                                for (int k = 0; k < NOTIFICATION_TYPES.length; k++) {
+                                    if (NOTIFICATION_TYPES[k].equalsIgnoreCase(parts[0].trim())) { comboVal.set(k); break; }
+                                }
+                                textVal.set(parts[1]);
+                            } else {
+                                textVal.set(parts.length == 1 ? parts[0] : "");
+                            }
+                        }
+                        case WRITE_TO_FILE, APPEND_TO_FILE -> {
+                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
+                            textVal.set(parts.length >= 1 ? parts[0] : "");
+                            secondaryVal.set(parts.length == 2 ? parts[1] : "");
+                        }
+                        case SET_STATE -> {
+                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
+                            if (parts.length == 2) {
+                                secondaryVal.set(parts[0]); // state name
+                                textVal.set(parts[1]);      // value
+                            } else {
+                                textVal.set(parts.length == 1 ? parts[0] : "");
+                            }
+                        }
                         case SEND_TO_DEVICE -> {
-                            // value format: "deviceName|data"
-                            String[] sdParts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
-                            if (sdParts.length >= 1) {
+                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
+                            if (parts.length >= 1) {
                                 for (int i = 0; i < deviceNames.length; i++) {
-                                    if (deviceNames[i].equals(sdParts[0].trim())) { comboVal.set(i); break; }
+                                    if (deviceNames[i].equals(parts[0].trim())) { comboVal.set(i); break; }
                                 }
                             }
-                            textVal.set(sdParts.length == 2 ? sdParts[1] : "");
+                            textVal.set(parts.length == 2 ? parts[1] : "");
                         }
+                        case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
+                             PLAY_SOUND, CLEAR_STATE -> textVal.set(a.getValue() != null ? a.getValue() : "");
                     }
                     fieldActionComboIndices.add(comboVal);
                     fieldActionValues.add(textVal);
+                    fieldActionSecondaryValues.add(secondaryVal);
                 }
             }
         } else {
@@ -187,7 +227,9 @@ public class EventEditorDialog extends BaseDialog {
                 fieldConditions.add(new ImString[]{new ImString(128), new ImString(256)});
                 fieldConditionTypeIndices.add(new ImInt(0));
                 fieldConditionCaseSensitive.add(new ImBoolean(false));
-                fieldConditionDeviceIndices.add(new ImInt(0));
+                ImBoolean[] newDeviceSel = new ImBoolean[deviceNames.length];
+                for (int j = 0; j < deviceNames.length; j++) newDeviceSel[j] = new ImBoolean(false);
+                fieldConditionDeviceSelections.add(newDeviceSel);
             }
 
             ImGui.spacing();
@@ -206,6 +248,7 @@ public class EventEditorDialog extends BaseDialog {
                 fieldActionTypes.add(new ImInt(0));
                 fieldActionComboIndices.add(new ImInt(0));
                 fieldActionValues.add(new ImString(512));
+                fieldActionSecondaryValues.add(new ImString(512));
             }
 
             ImGui.spacing();
@@ -240,24 +283,15 @@ public class EventEditorDialog extends BaseDialog {
         ImGui.bulletText("Text is placed in the clipboard without pasting.");
 
         ImGui.spacing();
-        ImGui.text("Write to File:");
-        ImGui.bulletText("Overwrites the file with new content on each trigger.");
-        ImGui.bulletText("Value: path - writes \"{timestamp}: {input}\".");
-        ImGui.bulletText("Value: path|content - writes custom content.");
-        ImGui.bulletText("Example: C:\\logs\\latest.txt|{input}");
-
-        ImGui.spacing();
-        ImGui.text("Append to File:");
-        ImGui.bulletText("Appends a new line to the file on each trigger.");
-        ImGui.bulletText("Value: path - appends \"{timestamp}: {input}\".");
-        ImGui.bulletText("Value: path|content - appends custom content.");
-        ImGui.bulletText("Example: C:\\logs\\data.txt|{timestamp}: {input}");
+        ImGui.text("Write to File / Append to File:");
+        ImGui.bulletText("Path: the file to write or append to.");
+        ImGui.bulletText("Content: optional template; defaults to \"{timestamp}: {input}\".");
+        ImGui.bulletText("{input} and {timestamp} can be used in both fields.");
 
         ImGui.spacing();
         ImGui.text("Show Notification:");
-        ImGui.bulletText("Value: message - shows an INFO notification.");
-        ImGui.bulletText("Value: TYPE|message - TYPE: INFO, WARNING, ERROR, NONE.");
-        ImGui.bulletText("Example: WARNING|Temperature high: {input}");
+        ImGui.bulletText("Select the notification type (INFO, WARNING, ERROR, NONE).");
+        ImGui.bulletText("Enter the message text. {input} and {timestamp} are supported.");
 
         ImGui.spacing();
         ImGui.text("Play Sound:");
@@ -266,15 +300,13 @@ public class EventEditorDialog extends BaseDialog {
 
         ImGui.spacing();
         ImGui.text("Set State:");
-        ImGui.bulletText("Value: value - sets the default state to 'value'.");
-        ImGui.bulletText("Value: name|value - sets a named state.");
-        ImGui.bulletText("Example: location|warehouse");
+        ImGui.bulletText("State name: optional; leave blank to set the default state.");
+        ImGui.bulletText("Value: the value to assign to the state.");
 
         ImGui.spacing();
         ImGui.text("Clear State:");
         ImGui.bulletText("Leave blank to clear the default state.");
         ImGui.bulletText("Value: name - clears the named state 'name'.");
-        ImGui.bulletText("Must match the name used in Set State (name|value format).");
 
         ImGui.spacing();
         ImGui.text("Send to Device:");
@@ -289,9 +321,9 @@ public class EventEditorDialog extends BaseDialog {
         ImGui.text("Condition format hints");
         ImGui.beginDisabled();
 
-        ImGui.text("State Equals:");
-        ImGui.bulletText("Value: value - checks if the default state equals 'value'.");
-        ImGui.bulletText("Value: name|value - checks if state 'name' equals 'value'.");
+        ImGui.text("State Equals / State Not Equals:");
+        ImGui.bulletText("State name: optional; leave blank to check the default state.");
+        ImGui.bulletText("Expected value: the value the state must equal (or not equal).");
 
         ImGui.spacing();
         ImGui.text("State Is Empty:");
@@ -335,12 +367,30 @@ public class EventEditorDialog extends BaseDialog {
 
                 ImGui.tableSetColumnIndex(1);
                 ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                if (condType == ConditionType.DEVICE_EQUALS) {
+                if (condType == ConditionType.DEVICE_EQUALS || condType == ConditionType.DEVICE_NOT_EQUALS) {
                     if (deviceNames.length > 0) {
-                        ImGui.combo("##cdev" + i, fieldConditionDeviceIndices.get(i), deviceNames);
+                        ImBoolean[] sel = fieldConditionDeviceSelections.get(i);
+                        StringBuilder previewSb = new StringBuilder();
+                        for (int j = 0; j < sel.length; j++) {
+                            if (sel[j].get()) { if (!previewSb.isEmpty()) previewSb.append(", "); previewSb.append(deviceNames[j]); }
+                        }
+                        String preview = previewSb.isEmpty() ? "None" : previewSb.toString();
+                        if (ImGui.beginCombo("##cdev" + i, preview)) {
+                            for (int j = 0; j < deviceNames.length; j++) {
+                                ImGui.checkbox(deviceNames[j] + "##cdevchk" + i + "_" + j, sel[j]);
+                            }
+                            ImGui.endCombo();
+                        }
                     } else {
                         ImGui.textDisabled("No devices");
                     }
+                } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS) {
+                    float nameW = ImGui.getContentRegionAvailX() * 0.4f;
+                    ImGui.setNextItemWidth(nameW);
+                    ImGui.inputTextWithHint("##cname" + i, "State name (default)", fieldConditions.get(i)[0]);
+                    ImGui.sameLine();
+                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                    ImGui.inputTextWithHint("##cval" + i, "Expected value", fieldConditions.get(i)[1]);
                 } else {
                     ImGui.beginDisabled(noValue);
                     ImGui.inputText("##cval" + i, fieldConditions.get(i)[1]);
@@ -379,19 +429,19 @@ public class EventEditorDialog extends BaseDialog {
             fieldConditions.remove(removeIndex);
             fieldConditionTypeIndices.remove(removeIndex);
             fieldConditionCaseSensitive.remove(removeIndex);
-            fieldConditionDeviceIndices.remove(removeIndex);
+            fieldConditionDeviceSelections.remove(removeIndex);
         }
         if (moveUpIndex > 0) {
             Collections.swap(fieldConditions, moveUpIndex, moveUpIndex - 1);
             Collections.swap(fieldConditionTypeIndices, moveUpIndex, moveUpIndex - 1);
             Collections.swap(fieldConditionCaseSensitive, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldConditionDeviceIndices, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldConditionDeviceSelections, moveUpIndex, moveUpIndex - 1);
         }
         if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
             Collections.swap(fieldConditions, moveDownIndex, moveDownIndex + 1);
             Collections.swap(fieldConditionTypeIndices, moveDownIndex, moveDownIndex + 1);
             Collections.swap(fieldConditionCaseSensitive, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldConditionDeviceIndices, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldConditionDeviceSelections, moveDownIndex, moveDownIndex + 1);
         }
     }
 
@@ -419,6 +469,7 @@ public class EventEditorDialog extends BaseDialog {
                     if (fieldActionTypes.get(i).get() != prevType) {
                         fieldActionComboIndices.get(i).set(0);
                         fieldActionValues.get(i).set("");
+                        fieldActionSecondaryValues.get(i).set("");
                     }
                 }
 
@@ -456,9 +507,32 @@ public class EventEditorDialog extends BaseDialog {
                         ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
                         ImGui.inputText("##atext" + i, fieldActionValues.get(i));
                     }
+                    case SHOW_NOTIFICATION -> {
+                        float typeW = ImGui.getContentRegionAvailX() * 0.3f;
+                        ImGui.setNextItemWidth(typeW);
+                        ImGui.combo("##anotiftype" + i, fieldActionComboIndices.get(i), NOTIFICATION_TYPES);
+                        ImGui.sameLine();
+                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                        ImGui.inputTextWithHint("##atext" + i, "Message", fieldActionValues.get(i));
+                    }
+                    case WRITE_TO_FILE, APPEND_TO_FILE -> {
+                        float pathW = ImGui.getContentRegionAvailX() * 0.5f;
+                        ImGui.setNextItemWidth(pathW);
+                        ImGui.inputTextWithHint("##atext" + i, "File path", fieldActionValues.get(i));
+                        ImGui.sameLine();
+                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                        ImGui.inputTextWithHint("##asec" + i, "Content ({timestamp}: {input})", fieldActionSecondaryValues.get(i));
+                    }
+                    case SET_STATE -> {
+                        float nameW = ImGui.getContentRegionAvailX() * 0.4f;
+                        ImGui.setNextItemWidth(nameW);
+                        ImGui.inputTextWithHint("##asec" + i, "State name (default)", fieldActionSecondaryValues.get(i));
+                        ImGui.sameLine();
+                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                        ImGui.inputTextWithHint("##atext" + i, "Value", fieldActionValues.get(i));
+                    }
                     case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                         SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
-                         PLAY_SOUND, SET_STATE, CLEAR_STATE -> ImGui.inputText("##atext" + i, fieldActionValues.get(i));
+                         PLAY_SOUND, CLEAR_STATE -> ImGui.inputText("##atext" + i, fieldActionValues.get(i));
                 }
 
                 ImGui.tableSetColumnIndex(2);
@@ -486,16 +560,19 @@ public class EventEditorDialog extends BaseDialog {
             fieldActionTypes.remove(removeIndex);
             fieldActionComboIndices.remove(removeIndex);
             fieldActionValues.remove(removeIndex);
+            fieldActionSecondaryValues.remove(removeIndex);
         }
         if (moveUpIndex > 0) {
             Collections.swap(fieldActionTypes, moveUpIndex, moveUpIndex - 1);
             Collections.swap(fieldActionComboIndices, moveUpIndex, moveUpIndex - 1);
             Collections.swap(fieldActionValues, moveUpIndex, moveUpIndex - 1);
+            Collections.swap(fieldActionSecondaryValues, moveUpIndex, moveUpIndex - 1);
         }
         if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
             Collections.swap(fieldActionTypes, moveDownIndex, moveDownIndex + 1);
             Collections.swap(fieldActionComboIndices, moveDownIndex, moveDownIndex + 1);
             Collections.swap(fieldActionValues, moveDownIndex, moveDownIndex + 1);
+            Collections.swap(fieldActionSecondaryValues, moveDownIndex, moveDownIndex + 1);
         }
     }
 
@@ -541,11 +618,15 @@ public class EventEditorDialog extends BaseDialog {
                 }
                 case IS_NUMERIC -> {} // no value required
                 case STATE_IS_EMPTY -> {} // value is an optional state name; blank = default state
-                case STATE_EQUALS -> {
+                case STATE_EQUALS, STATE_NOT_EQUALS -> {
                     if (val.isEmpty()) return label + "value cannot be empty.";
                 }
-                case DEVICE_EQUALS -> {
+                case DEVICE_EQUALS, DEVICE_NOT_EQUALS -> {
                     if (deviceNames.length == 0) return label + "no devices configured.";
+                    ImBoolean[] sel = fieldConditionDeviceSelections.get(i);
+                    boolean anySelected = false;
+                    for (ImBoolean b : sel) { if (b.get()) { anySelected = true; break; } }
+                    if (!anySelected) return label + "select at least one device.";
                 }
             }
         }
@@ -559,8 +640,17 @@ public class EventEditorDialog extends BaseDialog {
             ConditionType condType = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
             String typeName = condType.name();
             String value;
-            if (condType == ConditionType.DEVICE_EQUALS) {
-                value = deviceNames.length > 0 ? deviceNames[fieldConditionDeviceIndices.get(i).get()] : "";
+            if (condType == ConditionType.DEVICE_EQUALS || condType == ConditionType.DEVICE_NOT_EQUALS) {
+                StringBuilder sb = new StringBuilder();
+                ImBoolean[] sel = fieldConditionDeviceSelections.get(i);
+                for (int j = 0; j < sel.length; j++) {
+                    if (sel[j].get()) { if (!sb.isEmpty()) sb.append(","); sb.append(deviceNames[j]); }
+                }
+                value = sb.toString();
+            } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS) {
+                String name = fieldConditions.get(i)[0].get().trim();
+                String stateVal = fieldConditions.get(i)[1].get().trim();
+                value = name.isEmpty() ? stateVal : name + "|" + stateVal;
             } else {
                 value = fieldConditions.get(i)[1].get().trim();
             }
@@ -584,9 +674,23 @@ public class EventEditorDialog extends BaseDialog {
                 case SEND_TO_DEVICE -> deviceNames.length > 0
                         ? deviceNames[fieldActionComboIndices.get(i).get()] + "|" + fieldActionValues.get(i).get().trim()
                         : null;
+                case SHOW_NOTIFICATION -> {
+                    String type = NOTIFICATION_TYPES[fieldActionComboIndices.get(i).get()];
+                    String msg = fieldActionValues.get(i).get().trim();
+                    yield msg.isEmpty() ? null : type + "|" + msg;
+                }
+                case WRITE_TO_FILE, APPEND_TO_FILE -> {
+                    String path = fieldActionValues.get(i).get().trim();
+                    String content = fieldActionSecondaryValues.get(i).get().trim();
+                    yield content.isEmpty() ? path : path + "|" + content;
+                }
+                case SET_STATE -> {
+                    String stateName = fieldActionSecondaryValues.get(i).get().trim();
+                    String stateVal = fieldActionValues.get(i).get().trim();
+                    yield stateName.isEmpty() ? stateVal : stateName + "|" + stateVal;
+                }
                 case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                     SHOW_NOTIFICATION, WRITE_TO_FILE, APPEND_TO_FILE,
-                     PLAY_SOUND, SET_STATE, CLEAR_STATE -> fieldActionValues.get(i).get().trim();
+                     PLAY_SOUND, CLEAR_STATE -> fieldActionValues.get(i).get().trim();
             };
             boolean allowEmptyValue = actionType == ActionType.PLAY_SOUND || actionType == ActionType.CLEAR_STATE;
             if (allowEmptyValue || (value != null && !value.isBlank())) {
