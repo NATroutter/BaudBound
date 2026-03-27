@@ -64,7 +64,7 @@ public class GuiHelper {
         float itemSpacing = ImGui.getStyle().getItemSpacingY();
         float lineHeight = ImGui.getTextLineHeightWithSpacing();
 
-        float footerHeight = itemSpacing * 4 + 21;
+        float footerHeight = itemSpacing * 4 + GuiTheme.BUTTON_HEIGHT + 1; // +1 for separator line
         float listHeight = fillHeight
                 ? ImGui.getContentRegionAvailY() - footerHeight - reservedHeight
                 : lineHeight * Math.max(data.size(), 3) + ImGui.getStyle().getFramePaddingY() * 2;
@@ -74,8 +74,8 @@ public class GuiHelper {
             for (int n = 0; n < data.size(); n++) {
                 boolean isSelected = (selected.get() == n);
                 if (isSelected) {
-                    ImGui.pushStyleColor(ImGuiCol.Header, 0.25882354f, 0.5882353f, 0.9764706f, 0.5f);
-                    ImGui.pushStyleColor(ImGuiCol.HeaderHovered, 0.25882354f, 0.5882353f, 0.9764706f, 0.8f);
+                    ImGui.pushStyleColor(ImGuiCol.Header,        GuiTheme.COLOR_ACCENT_HEADER);
+                    ImGui.pushStyleColor(ImGuiCol.HeaderHovered, GuiTheme.COLOR_ACCENT_HEADER_HOVERED);
                 }
                 if (ImGui.selectable(data.get(n).getName(), isSelected)) {
                     selected.set(n);
@@ -146,12 +146,12 @@ public class GuiHelper {
      * @param url   the URL to open
      */
     public static void clickableLink(String label, String url) {
-        ImGui.textColored(0.3f, 0.7f, 1.0f, 1.0f, label);
+        ImGui.textColored(GuiTheme.COLOR_LINK.x, GuiTheme.COLOR_LINK.y, GuiTheme.COLOR_LINK.z, GuiTheme.COLOR_LINK.w, label);
         if (ImGui.isItemHovered()) {
             ImGui.setMouseCursor(ImGuiMouseCursor.Hand);
             ImVec2 min = ImGui.getItemRectMin();
             ImVec2 max = ImGui.getItemRectMax();
-            ImGui.getWindowDrawList().addLine(min.x, max.y, max.x, max.y, ImGui.getColorU32(0.3f, 0.7f, 1.0f, 1.0f));
+            ImGui.getWindowDrawList().addLine(min.x, max.y, max.x, max.y, GuiTheme.colorU32(GuiTheme.COLOR_LINK));
         }
         if (ImGui.isItemClicked()) {
             try {

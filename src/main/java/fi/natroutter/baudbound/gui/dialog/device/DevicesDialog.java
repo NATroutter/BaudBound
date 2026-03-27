@@ -84,13 +84,13 @@ public class DevicesDialog extends BaseDialog {
                         ImGui.popStyleColor(3);
                         if (ImGui.isItemActive()) {
                             ImGui.tableSetBgColor(ImGuiTableBgTarget.CellBg,
-                                    ImGui.getColorU32(0.2588f, 0.5882f, 0.9765f, 0.55f));
+                                    GuiTheme.colorU32(GuiTheme.COLOR_ACCENT_ACTIVE));
                         } else if (isSelected) {
                             ImGui.tableSetBgColor(ImGuiTableBgTarget.CellBg,
-                                    ImGui.getColorU32(0.2588f, 0.5882f, 0.9765f, 0.35f));
+                                    GuiTheme.colorU32(GuiTheme.COLOR_ACCENT_SELECTED));
                         } else if (ImGui.isItemHovered()) {
                             ImGui.tableSetBgColor(ImGuiTableBgTarget.CellBg,
-                                    ImGui.getColorU32(0.2588f, 0.5882f, 0.9765f, 0.15f));
+                                    GuiTheme.colorU32(GuiTheme.COLOR_ACCENT_HOVERED));
                         }
                         if (isSelected) ImGui.setItemDefaultFocus();
                         // Draw name text centered vertically within the selectable area

@@ -10,8 +10,10 @@ import imgui.flag.ImGuiDir;
  * Shared visual constants and the application's ImGui theme.
  * <p>
  * Call {@link #applyDarkRuda()} once during {@code initImGui} to apply the dark Ruda-inspired
- * color scheme. The {@link #BUTTON_HEIGHT} and {@link #COLOR_DELETE_BUTTON} constants are
- * referenced throughout the UI to keep sizing and destructive-action coloring consistent.
+ * color scheme. The {@link #BUTTON_HEIGHT}, {@link #COLOR_DELETE_BUTTON}, and
+ * {@code COLOR_ACCENT_*} constants are referenced throughout the UI to keep sizing and
+ * coloring consistent. Use {@link #colorU32(ImVec4)} to convert an {@link ImVec4} constant
+ * to the packed integer form required by draw-list and table background APIs.
  */
 public class GuiTheme {
 
@@ -20,6 +22,25 @@ public class GuiTheme {
 
     /** Red color components (r, g, b, a) for destructive/delete buttons. */
     public static final ImVec4 COLOR_DELETE_BUTTON = new ImVec4(0.6f, 0.1f, 0.1f, 1.0f);
+
+    /** Accent blue — pressed/active state (e.g. table row held down). */
+    public static final ImVec4 COLOR_ACCENT_ACTIVE          = new ImVec4(0.2588f, 0.5882f, 0.9765f, 0.55f);
+    /** Accent blue — selected state (e.g. selected table row CellBg). */
+    public static final ImVec4 COLOR_ACCENT_SELECTED        = new ImVec4(0.2588f, 0.5882f, 0.9765f, 0.35f);
+    /** Accent blue — hovered state (e.g. table row under cursor). */
+    public static final ImVec4 COLOR_ACCENT_HOVERED         = new ImVec4(0.2588f, 0.5882f, 0.9765f, 0.15f);
+    /** Accent blue — {@code ImGuiCol.Header} override for selected list items. */
+    public static final ImVec4 COLOR_ACCENT_HEADER          = new ImVec4(0.2588f, 0.5882f, 0.9765f, 0.5f);
+    /** Accent blue — {@code ImGuiCol.HeaderHovered} override for selected list items. */
+    public static final ImVec4 COLOR_ACCENT_HEADER_HOVERED  = new ImVec4(0.2588f, 0.5882f, 0.9765f, 0.8f);
+
+    /** Light blue used for clickable link text and underlines. */
+    public static final ImVec4 COLOR_LINK = new ImVec4(0.3f, 0.7f, 1.0f, 1.0f);
+
+    /** Returns the packed ABGR integer for the given color, usable with draw-list and table APIs. */
+    public static int colorU32(ImVec4 c) {
+        return ImGui.getColorU32(c.x, c.y, c.z, c.w);
+    }
 
 /** Applies the dark Ruda color scheme to the current ImGui style. Call once during startup. */
 public static void applyDarkRuda() {
