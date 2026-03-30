@@ -59,6 +59,7 @@ public class MainWindow {
                         copy.setName(copy.getName() + " (copy)");
                         events.add(copy);
                         storage.save();
+                        BaudBound.getEventHandler().invalidateSortCache();
                     },
                     ()-> {
                         events.remove(selectedEvent.get());
@@ -66,18 +67,21 @@ public class MainWindow {
                             selectedEvent.set(Math.max(0, events.size() - 1));
                         }
                         storage.save();
+                        BaudBound.getEventHandler().invalidateSortCache();
                     },
                     ()-> {
                         int i = selectedEvent.get();
                         Collections.swap(events, i, i - 1);
                         selectedEvent.set(i - 1);
                         storage.save();
+                        BaudBound.getEventHandler().invalidateSortCache();
                     },
                     ()-> {
                         int i = selectedEvent.get();
                         Collections.swap(events, i, i + 1);
                         selectedEvent.set(i + 1);
                         storage.save();
+                        BaudBound.getEventHandler().invalidateSortCache();
                     },
                     ()->{}
             );

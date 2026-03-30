@@ -52,6 +52,12 @@ public class DataStore {
         @SerializedName("event")
         private Event event = new Event();
 
+        @SerializedName("graphics")
+        private Graphics graphics = new Graphics();
+
+        @SerializedName("debug")
+        private Debug debug = new Debug();
+
         @Data
         @NoArgsConstructor
         @AllArgsConstructor
@@ -59,6 +65,25 @@ public class DataStore {
 
             @SerializedName("start_hidden")
             private boolean startHidden;
+
+        }
+
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class Debug {
+
+            /** Whether the debug overlay (FPS, frame time, memory, device status) is rendered. */
+            @SerializedName("overlay")
+            private boolean overlay;
+
+            /**
+             * Index into {@code DebugOverlay.INTERVAL_LABELS} / {@code INTERVAL_MS} that controls
+             * how often the performance graphs are sampled. {@code 0} means every frame.
+             * Defaults to {@code 2} (100 ms) via {@link SettingsDialog#load()}.
+             */
+            @SerializedName("sample_interval")
+            private int sampleIntervalIdx;
 
         }
 
@@ -75,6 +100,28 @@ public class DataStore {
 
             @SerializedName("skip_empty_conditions")
             private boolean skipEmptyConditions;
+
+        }
+
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class Graphics {
+
+            /**
+             * Whether GLFW vertical sync is enabled ({@code glfwSwapInterval(1)}).
+             * Missing from older configs defaults to {@code false} via Gson, but the
+             * settings dialog treats both fields unset as vsync-on for backwards compatibility.
+             */
+            @SerializedName("vsync")
+            private boolean vsync;
+
+            /**
+             * Target FPS limit when vsync is disabled. {@code 0} means uncapped.
+             */
+            @SerializedName("fps_limit")
+            private int fpsLimit;
+
 
         }
 

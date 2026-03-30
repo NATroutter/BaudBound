@@ -63,6 +63,12 @@ public class EventHandler {
     private static final String DEFAULT_STATE = "default";
     private final Map<String, String> states = new ConcurrentHashMap<>();
 
+    /** Cache of compiled regex patterns keyed by pattern string to avoid recompilation on every condition check. */
+    private final Map<String, Pattern> patternCache = new ConcurrentHashMap<>();
+
+    /** Cache of the condition-first sorted event list. Invalidated via {@link #invalidateSortCache()}. */
+    private volatile List<DataStore.Event> sortedEventsCache = null;
+
     /**
      * Returns an unmodifiable snapshot of the current state map for display purposes.
      * Keys are state names; values are the current state values.
@@ -87,6 +93,14 @@ public class EventHandler {
     }
 
     /**
+     * Invalidates the cached condition-first sorted event list.
+     * Must be called whenever the event list is modified (add, edit, remove, reorder).
+     */
+    public void invalidateSortCache() {
+        sortedEventsCache = null;
+    }
+
+    /**
      * Evaluates all configured events against {@code input} and fires matching actions.
      * Respects the {@code runFirstOnly}, {@code conditionEventsFirst}, and
      * {@code skipEmptyConditions} settings from {@link DataStore.Settings.Event}.
@@ -103,13 +117,16 @@ public class EventHandler {
 
         List<DataStore.Event> events = data.getEvents();
         if (eventSettings.isConditionEventsFirst()) {
-            events = events.stream()
-                    .sorted((a, b) -> {
-                        boolean aHas = a.getConditions() != null && !a.getConditions().isEmpty();
-                        boolean bHas = b.getConditions() != null && !b.getConditions().isEmpty();
-                        return Boolean.compare(bHas, aHas); // events with conditions first
-                    })
-                    .toList();
+            if (sortedEventsCache == null) {
+                sortedEventsCache = events.stream()
+                        .sorted((a, b) -> {
+                            boolean aHas = a.getConditions() != null && !a.getConditions().isEmpty();
+                            boolean bHas = b.getConditions() != null && !b.getConditions().isEmpty();
+                            return Boolean.compare(bHas, aHas); // events with conditions first
+                        })
+                        .toList();
+            }
+            events = sortedEventsCache;
         }
 
         boolean skipEmpty = eventSettings.isSkipEmptyConditions();
@@ -150,7 +167,7 @@ public class EventHandler {
                 case NOT_CONTAINS    -> !normalizedInput.contains(normalizedValue);
                 case NOT_STARTS_WITH -> !normalizedInput.startsWith(normalizedValue);
                 case EQUALS          -> normalizedInput.equals(normalizedValue);
-                case REGEX           -> Pattern.matches(value, input); // regex handles its own case
+                case REGEX           -> patternCache.computeIfAbsent(value, Pattern::compile).matcher(input).matches();
                 case IS_NUMERIC      -> isNumeric(input);
                 case GREATER_THAN    -> compareNumeric(input, value) > 0;
                 case LESS_THAN       -> compareNumeric(input, value) < 0;

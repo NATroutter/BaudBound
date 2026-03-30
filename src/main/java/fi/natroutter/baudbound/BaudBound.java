@@ -8,6 +8,7 @@ import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.event.EventHandler;
 import fi.natroutter.foxlib.FoxLib;
 import fi.natroutter.foxlib.logger.FoxLogger;
+import fi.natroutter.baudbound.gui.DebugOverlay;
 import fi.natroutter.baudbound.gui.MainWindow;
 import fi.natroutter.baudbound.gui.dialog.AboutDialog;
 import fi.natroutter.baudbound.gui.dialog.EventEditorDialog;
@@ -18,6 +19,7 @@ import fi.natroutter.baudbound.gui.dialog.webhook.WebhookEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.serial.DeviceConnectionManager;
+import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import fi.natroutter.baudbound.system.SingleInstanceManager;
 import imgui.ImGui;
@@ -85,11 +87,14 @@ public class BaudBound extends Application {
     @Getter private static StatesDialog statesDialog;
 
     private static MainWindow mainWindow;
+    private static DebugOverlay debugOverlay;
 
     private static TrayIcon trayIcon = null;
 
     private volatile boolean pendingShow = false;
     private volatile boolean pendingExit = false;
+
+    private long lastFrameNanos = System.nanoTime();
 
     public static void main(String[] args) {
 
@@ -124,6 +129,7 @@ public class BaudBound extends Application {
         eventEditorDialog = new EventEditorDialog();
         statesDialog = new StatesDialog();
         mainWindow = new MainWindow();
+        debugOverlay = new DebugOverlay();
 
         launch(app);
         System.exit(0);
@@ -134,6 +140,35 @@ public class BaudBound extends Application {
         pendingShow = true;
     }
 
+    /**
+     * Sleeps the GLFW thread to enforce the configured FPS limit when vsync is disabled.
+     * No-op when vsync is enabled (swap interval already limits the frame rate).
+     */
+    private void limitFrameRate() {
+        DataStore.Settings.Graphics g = storageProvider.getData().getSettings().getGraphics();
+        if (g.isVsync() || g.getFpsLimit() <= 0) return;
+
+        long targetNanos = 1_000_000_000L / g.getFpsLimit();
+        long sleepNanos  = targetNanos - (System.nanoTime() - lastFrameNanos);
+        if (sleepNanos > 1_000_000) {
+            try { Thread.sleep(sleepNanos / 1_000_000); } catch (InterruptedException ignored) {}
+        }
+        lastFrameNanos = System.nanoTime();
+    }
+
+    /**
+     * Applies the current vsync setting via {@code glfwSwapInterval}.
+     * Must be called from the GLFW main thread.
+     * <p>
+     * If neither vsync nor fpsCap has been configured (both at their Gson-default zero/false),
+     * vsync is enabled as a backwards-compatible default.
+     */
+    public static void applyVsync() {
+        DataStore.Settings.Graphics g = storageProvider.getData().getSettings().getGraphics();
+        boolean effectiveVsync = g.isVsync() || g.getFpsLimit() == 0;
+        GLFW.glfwSwapInterval(effectiveVsync ? 1 : 0);
+    }
+
     public static void showNotification(String title, String message, TrayIcon.MessageType type) {
         if (trayIcon != null) {
             trayIcon.displayMessage(title, message, type);
@@ -142,6 +177,8 @@ public class BaudBound extends Application {
 
     @Override
     public void process() {
+        limitFrameRate();
+
         if (pendingExit) {
             GLFW.glfwSetWindowShouldClose(getHandle(), true);
             return;
@@ -165,7 +202,10 @@ public class BaudBound extends Application {
         programsDialog.render();
         programEditorDialog.render();
         statesDialog.render();
+
+        debugOverlay.render();
     }
+
 
     @Override
     protected void configure(final Configuration config) {
@@ -177,6 +217,7 @@ public class BaudBound extends Application {
     @Override
     protected void initWindow(final Configuration config) {
         super.initWindow(config);
+        applyVsync();
         GLFW.glfwSetWindowSizeLimits(getHandle(), 400, 300, GLFW.GLFW_DONT_CARE, GLFW.GLFW_DONT_CARE);
 
         setWindowIcon(loadIcon());

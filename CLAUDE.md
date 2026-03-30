@@ -27,6 +27,7 @@ fi.natroutter.baudbound/
 ├── system/ShortcutManager.java
 └── gui/
     ├── MainWindow.java       # Fullscreen event-list window
+    ├── DebugOverlay.java     # Real-time debug overlay (FPS, memory, JVM, devices, states)
     ├── MenuBar.java
     ├── theme/GuiTheme.java
     ├── util/GuiHelper.java   # listAndEditorButtons, keyValueTable, renderClickableLink, instructions

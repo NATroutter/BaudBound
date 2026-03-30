@@ -735,6 +735,7 @@ public class EventEditorDialog extends BaseDialog {
         }
 
         storage.save();
+        BaudBound.getEventHandler().invalidateSortCache();
         ImGui.closeCurrentPopup();
         BaudBound.getMessageDialog().show("Saved", "Event \"" + name + "\" saved successfully.", new DialogButton("OK", () -> {}));
     }
