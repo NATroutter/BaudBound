@@ -118,13 +118,15 @@ public class DeviceEditorDialog extends BaseDialog {
             ImGui.spacing();
             ImGui.separatorText("Serial Port");
 
-            // Port selector with Refresh button
+            // Port selector with Refresh and Info buttons
+            float spacing = ImGui.getStyle().getItemSpacingX();
             float refreshW = ImGui.calcTextSize("Refresh").x + ImGui.getStyle().getFramePaddingX() * 2;
+            float infoW    = ImGui.calcTextSize("Info").x    + ImGui.getStyle().getFramePaddingX() * 2;
             String longestPort = portNames != null ? getLongestString(portNames) : null;
             float minComboW = longestPort != null
                     ? ImGui.calcTextSize(longestPort).x + ImGui.getStyle().getFramePaddingX() * 2 + GuiTheme.BUTTON_HEIGHT
                     : 150;
-            float comboW = Math.max(minComboW, ImGui.getContentRegionAvailX() - refreshW - ImGui.getStyle().getItemSpacingX());
+            float comboW = Math.max(minComboW, ImGui.getContentRegionAvailX() - refreshW - infoW - spacing * 2);
 
             ImGui.text("Port");
             ImGui.setNextItemWidth(comboW);
@@ -133,6 +135,13 @@ public class DeviceEditorDialog extends BaseDialog {
             if (ImGui.button("Refresh", new ImVec2(refreshW, GuiTheme.BUTTON_HEIGHT))) {
                 refreshPorts();
             }
+            ImGui.sameLine();
+            boolean noPortSelected = availablePorts == null || availablePorts.isEmpty() || fieldPort.get() < 0;
+            ImGui.beginDisabled(noPortSelected);
+            if (ImGui.button("Info", new ImVec2(infoW, GuiTheme.BUTTON_HEIGHT)) && !noPortSelected) {
+                BaudBound.getMessageDialog().show("Port Info", getDeviceInfo(),new DialogButton("OK", this::requestOpen));
+            }
+            ImGui.endDisabled();
 
             ImGui.text("Baud Rate");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
@@ -171,6 +180,20 @@ public class DeviceEditorDialog extends BaseDialog {
         }
     }
 
+    private String getDeviceInfo() {
+        SerialPort p = availablePorts.get(fieldPort.get());
+        String info = "\n"
+                + "System Port Name:  " + p.getSystemPortName() + "\n"
+                + "System Port Path:  " + p.getSystemPortPath() + "\n"
+                + "Serial Number:  " + p.getSerialNumber() + "\n"
+                + "Product ID:  " + p.getProductID() + "\n"
+                + "Vendor ID:  " + p.getVendorID() + "\n"
+                + "Location:  " + p.getPortLocation() + "\n"
+                + "Description:  " + p.getDescriptivePortName() + "\n"
+                + "Port Details: " + p.getPortDescription();
+        return info;
+    }
+
     /**
      * Renders a custom port combo that shows all available ports but grays out and disables
      * any port already assigned to another device, preventing duplicate port assignments.
@@ -178,8 +201,9 @@ public class DeviceEditorDialog extends BaseDialog {
     private void renderPortCombo() {
         if (availablePorts == null || availablePorts.isEmpty()) {
             ImGui.beginDisabled();
-            ImGui.beginCombo("##port", "No ports found");
-            ImGui.endCombo();
+            if (ImGui.beginCombo("##port", "No ports found")) {
+                ImGui.endCombo();
+            }
             ImGui.endDisabled();
             return;
         }
@@ -192,7 +216,7 @@ public class DeviceEditorDialog extends BaseDialog {
 
         boolean noneAvailable = fieldPort.get() < 0;
         String preview = noneAvailable ? "No available ports"
-                : availablePorts.get(fieldPort.get()).getDescriptivePortName();
+                : portLabel(availablePorts.get(fieldPort.get()), false);
         ImGui.beginDisabled(noneAvailable);
         if (ImGui.beginCombo("##port", preview)) {
             for (int i = 0; i < availablePorts.size(); i++) {
@@ -201,7 +225,7 @@ public class DeviceEditorDialog extends BaseDialog {
                 boolean isSelected = fieldPort.get() == i;
 
                 ImGui.beginDisabled(inUse);
-                String label = p.getDescriptivePortName() + (inUse ? " (in use)" : "") + "##p" + i;
+                String label = portLabel(p, inUse) + "##p" + i;
                 if (ImGui.selectable(label, isSelected, ImGuiSelectableFlags.None)) {
                     fieldPort.set(i);
                 }
@@ -287,7 +311,7 @@ public class DeviceEditorDialog extends BaseDialog {
         availablePorts = SerialHandler.getAvailablePorts();
         portNames = availablePorts.isEmpty()
                 ? null
-                : availablePorts.stream().map(SerialPort::getDescriptivePortName).toArray(String[]::new);
+                : availablePorts.stream().map(p -> portLabel(p, false)).toArray(String[]::new);
     }
 
     private int findPortIndex(String systemPortName) {
@@ -302,6 +326,14 @@ public class DeviceEditorDialog extends BaseDialog {
         return IntStream.range(0, array.length)
                 .filter(i -> { try { return Integer.parseInt(array[i]) == value; } catch (NumberFormatException e) { return false; } })
                 .findFirst().orElse(0);
+    }
+
+    /** Returns a display label combining the descriptive name and system port name, e.g. "USB Keyboard (ttyUSB0)". */
+    private static String portLabel(SerialPort port, boolean inUse) {
+        String desc = port.getDescriptivePortName();
+        String sys = port.getSystemPortName();
+        String label = desc.equals(sys) || desc.contains(sys) ? desc : desc + " (" + sys + ")";
+        return inUse ? label + " (in use)" : label;
     }
 
     private static String getLongestString(String[] array) {
