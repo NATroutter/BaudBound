@@ -61,13 +61,17 @@ public class AboutDialog extends BaseDialog {
             ImGui.spacing();
 
             ImGui.text("Features:");
-            ImGui.bullet(); ImGui.textWrapped("Trigger actions when serial input matches configurable conditions");
-            ImGui.bullet(); ImGui.textWrapped("Conditions: starts/ends with, contains, equals, regex, numeric comparisons, and more");
-            ImGui.bullet(); ImGui.textWrapped("Actions: webhooks, open URL/program, type text, clipboard, notifications, write/append to file, play sound");
-            ImGui.bullet(); ImGui.textWrapped("Multiple conditions and actions per event");
-            ImGui.bullet(); ImGui.textWrapped("Event ordering controls and per-event enable/disable");
-            ImGui.bullet(); ImGui.textWrapped("System tray support with auto-connect and start hidden");
-            ImGui.bullet(); ImGui.textWrapped("Cross-platform (Windows, Linux, macOS)");
+            ImGui.bullet(); ImGui.textWrapped("Multiple serial devices — each with independent port, baud rate, parity, flow control, and auto-connect settings");
+            ImGui.bullet(); ImGui.textWrapped("16 condition types — starts/ends with, contains, equals, regex, numeric comparisons (greater/less/between), length, device origin, and state checks");
+            ImGui.bullet(); ImGui.textWrapped("12 action types — webhooks, open URL/program, type text, clipboard, system notification, write/append to file, play sound, send to device, set/clear state");
+            ImGui.bullet(); ImGui.textWrapped("Variable substitution — use {input} and {timestamp} in any action value");
+            ImGui.bullet(); ImGui.textWrapped("State machine — set and check named state variables across events");
+            ImGui.bullet(); ImGui.textWrapped("Multiple conditions and actions per event with ordering controls");
+            ImGui.bullet(); ImGui.textWrapped("System tray with minimize-to-tray, start hidden, and auto-connect on startup");
+            ImGui.bullet(); ImGui.textWrapped("Auto-reconnect — restores connection automatically if a device is unplugged");
+            ImGui.bullet(); ImGui.textWrapped("Headless mode (--nogui) — full serial processing with no window or tray icon");
+            ImGui.bullet(); ImGui.textWrapped("OS integration — autostart on login and shortcut creation on Windows, macOS, and Linux");
+            ImGui.bullet(); ImGui.textWrapped("Auto-updater — background update checks with in-app download and restart");
 
             ImGui.spacing();
             ImGui.separator();
