@@ -36,6 +36,9 @@ fi.natroutter.baudbound/
 ├── command/commands/ReloadCommand.java   # "reload" — reload storage.json from disk without restarting
 ├── command/commands/EventsCommand.java   # "events" — list all configured events with condition/action counts
 ├── command/commands/WebhookCommand.java  # "webhook [fire <name> [input]]" — list/fire configured webhooks
+├── command/commands/ProgramsCommand.java # "programs" — list configured programs with paths
+├── command/commands/PortsCommand.java    # "ports" — list serial ports available on the system
+├── command/commands/StatesCommand.java   # "states [clear <name>|all]" — list/clear runtime event states
 └── command/commands/ExitCommand.java     # "exit" — save config, disconnect devices, and exit
 ├── system/AppArgs.java          # picocli CLI flags (--hidden, --debug, --nogui, --version)
 ├── system/StartupManager.java
