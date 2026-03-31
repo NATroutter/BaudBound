@@ -49,6 +49,7 @@ public class DevicesCommand extends Command {
     }
 
     private void showAll() {
+        log("Console: devices listed");
         List<DataStore.Device> devices = BaudBound.getStorageProvider().getData().getDevices();
         if (devices.isEmpty()) {
             FoxLib.println("  {YELLOW}No devices configured.{RESET}");
@@ -67,15 +68,25 @@ public class DevicesCommand extends Command {
 
     private void handleConnect(String name) {
         DataStore.Device device = findDevice(name);
-        if (device == null) { FoxLib.println("  {BRIGHT_RED}Unknown device: \"" + name + "\"{RESET}"); return; }
+        if (device == null) {
+            logWarn("Console: connect failed — unknown device \"" + name + "\"");
+            FoxLib.println("  {BRIGHT_RED}Unknown device: \"" + name + "\"{RESET}");
+            return;
+        }
         BaudBound.getDeviceConnectionManager().connect(device);
+        log("Console: connecting device \"" + name + "\"");
         FoxLib.println("  {BRIGHT_GREEN}Connecting to \"" + name + "\"...{RESET}");
     }
 
     private void handleDisconnect(String name) {
         DataStore.Device device = findDevice(name);
-        if (device == null) { FoxLib.println("  {BRIGHT_RED}Unknown device: \"" + name + "\"{RESET}"); return; }
+        if (device == null) {
+            logWarn("Console: disconnect failed — unknown device \"" + name + "\"");
+            FoxLib.println("  {BRIGHT_RED}Unknown device: \"" + name + "\"{RESET}");
+            return;
+        }
         BaudBound.getDeviceConnectionManager().disconnect(device);
+        log("Console: disconnected device \"" + name + "\"");
         FoxLib.println("  {BRIGHT_GREEN}Disconnected \"" + name + "\".{RESET}");
     }
 

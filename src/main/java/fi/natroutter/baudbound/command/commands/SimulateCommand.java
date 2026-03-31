@@ -49,6 +49,7 @@ public class SimulateCommand extends Command {
         }
 
         String deviceTag = device != null ? " as device \"" + device.getName() + "\"" : "";
+        log("Console: simulating input \"" + input + "\"" + deviceTag);
         FoxLib.println("  {CYAN}Simulating input: \"" + input + "\"" + deviceTag + "{RESET}");
 
         final DataStore.Device finalDevice = device;

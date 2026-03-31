@@ -55,6 +55,7 @@ public class StatusCommand extends Command {
     }
 
     private void showAll() {
+        log("Console: status overview requested");
         Collection<StatusRegistry.Entry> all = registry.getAll();
         if (all.isEmpty()) {
             FoxLib.println("  {YELLOW}No statuses registered.{RESET}");
@@ -77,25 +78,35 @@ public class StatusCommand extends Command {
 
     private void handleGet(String name) {
         registry.find(name).ifPresentOrElse(entry -> {
-            String state = entry.getter().getAsBoolean()
-                    ? "{BRIGHT_GREEN}enabled{RESET}"
-                    : "{BRIGHT_RED}disabled{RESET}";
+            boolean state = entry.getter().getAsBoolean();
+            log("Console: status get \"" + name + "\" = " + (state ? "enabled" : "disabled"));
+            String stateStr = state ? "{BRIGHT_GREEN}enabled{RESET}" : "{BRIGHT_RED}disabled{RESET}";
             ConsoleUI.printBox(entry.name(), List.of(
-                    "{BLUE}State      :{RESET}  " + state,
+                    "{BLUE}State      :{RESET}  " + stateStr,
                     "{BLUE}Description:{RESET}  {WHITE}" + entry.description()
             ));
-        }, () -> FoxLib.println("  {BRIGHT_RED}Unknown status: \"" + name + "\"{RESET}"));
+        }, () -> {
+            logWarn("Console: status get failed — unknown status \"" + name + "\"");
+            FoxLib.println("  {BRIGHT_RED}Unknown status: \"" + name + "\"{RESET}");
+        });
     }
 
     private void handleSet(String name, String valueStr) {
         Boolean value = parseBoolean(valueStr);
         if (value == null) {
+            logWarn("Console: status set failed — invalid value \"" + valueStr + "\"");
             FoxLib.println("  {BRIGHT_RED}Invalid value: \"" + valueStr + "\"{RESET}  —  expected {BRIGHT_YELLOW}true{RESET} or {BRIGHT_YELLOW}false{RESET}");
             return;
         }
         registry.find(name).ifPresentOrElse(
-                entry -> entry.setter().accept(value),
-                () -> FoxLib.println("  {BRIGHT_RED}Unknown status: \"" + name + "\"{RESET}")
+                entry -> {
+                    log("Console: status set \"" + name + "\" = " + value);
+                    entry.setter().accept(value);
+                },
+                () -> {
+                    logWarn("Console: status set failed — unknown status \"" + name + "\"");
+                    FoxLib.println("  {BRIGHT_RED}Unknown status: \"" + name + "\"{RESET}");
+                }
         );
     }
 

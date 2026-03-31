@@ -31,6 +31,7 @@ public class EventsCommand extends Command {
             return;
         }
 
+        log("Console: events listed (" + events.size() + ")");
         int nameWidth = events.stream().mapToInt(e -> e.getName().length()).max().orElse(0);
         List<String> rows = new ArrayList<>();
         for (DataStore.Event event : events) {

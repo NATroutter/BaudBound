@@ -1,5 +1,7 @@
 package fi.natroutter.baudbound.command;
 
+import fi.natroutter.baudbound.BaudBound;
+
 /**
  * Abstract base for all console commands.
  * <p>
@@ -7,6 +9,10 @@ package fi.natroutter.baudbound.command;
  * implement {@link #execute(String[])} to define the command behaviour.
  * Commands are registered with {@link CommandHandler#register(Command)} and
  * dispatched by name when the user types input on the system console.
+ * <p>
+ * Use the protected {@link #log}, {@link #logWarn}, and {@link #logError} helpers to record
+ * command actions to the application log file. All three use {@code silent=true} so the
+ * entry is written to disk without printing a second line to the console.
  */
 public abstract class Command {
 
@@ -31,4 +37,11 @@ public abstract class Command {
 
     public String getName()        { return name; }
     public String getDescription() { return description; }
+
+    /** Logs an INFO-level message silently (file only, no console output). */
+    protected void log(String msg)      { BaudBound.getLogger().info(msg,  true); }
+    /** Logs a WARN-level message silently (file only, no console output). */
+    protected void logWarn(String msg)  { BaudBound.getLogger().warn(msg,  true); }
+    /** Logs an ERROR-level message silently (file only, no console output). */
+    protected void logError(String msg) { BaudBound.getLogger().error(msg, true); }
 }

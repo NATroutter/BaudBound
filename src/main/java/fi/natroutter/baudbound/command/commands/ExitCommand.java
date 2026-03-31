@@ -23,6 +23,7 @@ public class ExitCommand extends Command {
 
     @Override
     public void execute(String[] args) {
+        log("Console: exit requested");
         FoxLib.println("  {CYAN}Shutting down...{RESET}");
         BaudBound.requestExit();
     }

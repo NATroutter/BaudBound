@@ -32,8 +32,10 @@ public class SendCommand extends Command {
         String text = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
         boolean sent = BaudBound.getDeviceConnectionManager().sendToDevice(deviceName, text);
         if (sent) {
+            log("Console: sent to device \"" + deviceName + "\": " + text);
             FoxLib.println("  {BRIGHT_GREEN}Sent to \"" + deviceName + "\": {WHITE}" + text + "{RESET}");
         } else {
+            logError("Console: send failed — device \"" + deviceName + "\" is not connected or not found");
             FoxLib.println("  {BRIGHT_RED}Failed: device \"" + deviceName + "\" is not connected or not found.{RESET}");
         }
     }
