@@ -35,6 +35,7 @@ public class SettingsDialog extends BaseDialog {
 
     private final ImBoolean optionStartWithOS          = new ImBoolean(false);
     private final ImBoolean optionStartHidden          = new ImBoolean(false);
+    private final ImBoolean optionCheckForUpdates      = new ImBoolean(false);
     private final ImBoolean optionRunFirstEventOnly    = new ImBoolean(false);
     private final ImBoolean optionConditionEventsFirst = new ImBoolean(false);
     private final ImBoolean optionSkipEmptyConditions  = new ImBoolean(false);
@@ -65,6 +66,10 @@ public class SettingsDialog extends BaseDialog {
 
             ImGui.checkbox("Start hidden", optionStartHidden);
             GuiHelper.toolTip("Start minimized to the system tray instead of showing the window.");
+
+            ImGui.checkbox("Check for updates", optionCheckForUpdates);
+            GuiHelper.toolTip("Periodically check GitHub for a new release and show a notification\n" +
+                    "in the console and as a dialog when the app starts.");
 
             ImGui.separatorText("Event Settings");
 
@@ -192,6 +197,7 @@ public class SettingsDialog extends BaseDialog {
 
         optionStartWithOS.set(StartupManager.isEnabled());
         optionStartHidden.set(generic.isStartHidden());
+        optionCheckForUpdates.set(generic.isCheckForUpdatesEnabled());
 
         optionRunFirstEventOnly.set(event.isRunFirstOnly());
         optionConditionEventsFirst.set(event.isConditionEventsFirst());
@@ -221,6 +227,7 @@ public class SettingsDialog extends BaseDialog {
             optionStartWithOS.set(false);
         }
         generic.setStartHidden(optionStartHidden.get());
+        generic.setCheckForUpdates(optionCheckForUpdates.get());
 
         event.setRunFirstOnly(optionRunFirstEventOnly.get());
         event.setConditionEventsFirst(optionConditionEventsFirst.get());

@@ -66,6 +66,24 @@ public class DataStore {
             @SerializedName("start_hidden")
             private boolean startHidden;
 
+            /**
+             * Whether the background update checker is enabled.
+             * Stored as a boxed {@link Boolean} so that a missing field in an existing config
+             * file deserializes to {@code null} rather than primitive {@code false}, allowing
+             * callers to distinguish "never set" (default-on) from "explicitly disabled".
+             * Use {@link #isCheckForUpdatesEnabled()} for the effective value.
+             */
+            @SerializedName("check_for_updates")
+            private Boolean checkForUpdates;
+
+            /**
+             * Returns the effective check-for-updates setting: {@code true} when the field
+             * has never been written ({@code null}) or when it is explicitly enabled.
+             */
+            public boolean isCheckForUpdatesEnabled() {
+                return checkForUpdates == null || checkForUpdates;
+            }
+
         }
 
         @Data

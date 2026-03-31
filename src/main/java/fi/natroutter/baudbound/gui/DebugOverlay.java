@@ -57,7 +57,7 @@ public class DebugOverlay {
      */
     public void render() {
         DataStore.Settings.Debug debug = storage.getData().getSettings().getDebug();
-        if (!debug.isOverlay()) return;
+        if (!debug.isOverlay() && !BaudBound.getArgs().isDebug()) return;
 
         // --- Performance ---
         float fps = ImGui.getIO().getFramerate();

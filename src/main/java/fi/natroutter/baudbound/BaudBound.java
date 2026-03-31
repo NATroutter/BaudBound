@@ -15,6 +15,8 @@ import fi.natroutter.baudbound.gui.dialog.EventEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.MessageDialog;
 import fi.natroutter.baudbound.gui.dialog.SettingsDialog;
 import fi.natroutter.baudbound.gui.dialog.StatesDialog;
+import fi.natroutter.baudbound.gui.dialog.UpdateDialog;
+import fi.natroutter.baudbound.system.UpdateManager;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhookEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
@@ -27,8 +29,10 @@ import imgui.ImGuiIO;
 import imgui.app.Application;
 import imgui.app.Configuration;
 import imgui.flag.ImGuiConfigFlags;
+import fi.natroutter.baudbound.system.AppArgs;
 import lombok.Getter;
 import org.lwjgl.glfw.GLFW;
+import picocli.CommandLine;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -70,6 +74,7 @@ public class BaudBound extends Application {
         BUILD_DATE = props.getProperty("build.date", "unknown");
     }
 
+    @Getter private static AppArgs args;
     @Getter private static FoxLogger logger;
     @Getter private static StorageProvider storageProvider;
     @Getter private static EventHandler eventHandler;
@@ -85,6 +90,7 @@ public class BaudBound extends Application {
     @Getter private static ProgramEditorDialog programEditorDialog;
     @Getter private static EventEditorDialog eventEditorDialog;
     @Getter private static StatesDialog statesDialog;
+    @Getter private static UpdateDialog updateDialog;
 
     private static MainWindow mainWindow;
     private static DebugOverlay debugOverlay;
@@ -97,6 +103,15 @@ public class BaudBound extends Application {
     private long lastFrameNanos = System.nanoTime();
 
     public static void main(String[] args) {
+        AppArgs parsedArgs = new AppArgs();
+        CommandLine cmd = new CommandLine(parsedArgs);
+        cmd.parseArgs(args);
+
+        // Let picocli handle --help and --version, then exit cleanly.
+        if (cmd.isUsageHelpRequested())   { cmd.usage(System.out);          System.exit(0); }
+        if (cmd.isVersionHelpRequested()) { cmd.printVersionHelp(System.out); System.exit(0); }
+
+        BaudBound.args = parsedArgs;
 
         logger = new FoxLogger.Builder()
                 .setDebug(false)
@@ -113,9 +128,21 @@ public class BaudBound extends Application {
 
         storageProvider = new StorageProvider();
         eventHandler = new EventHandler();
-
         deviceConnectionManager = new DeviceConnectionManager();
         deviceConnectionManager.autoConnectAll(storageProvider.getData().getDevices());
+
+        if (parsedArgs.isNoGui()) {
+            logger.info(APP_NAME + " " + VERSION + " running in headless mode — press Ctrl+C to exit.");
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                storageProvider.save();
+                deviceConnectionManager.disconnectAll();
+                SingleInstanceManager.release();
+            }));
+            // In headless mode the background checker logs to console only.
+            UpdateManager.startBackgroundChecker(storageProvider, info -> {});
+            try { Thread.currentThread().join(); } catch (InterruptedException ignored) {}
+            System.exit(0);
+        }
 
         settingsDialog = new SettingsDialog();
         devicesDialog = new DevicesDialog();
@@ -128,12 +155,14 @@ public class BaudBound extends Application {
         aboutDialog = new AboutDialog();
         eventEditorDialog = new EventEditorDialog();
         statesDialog = new StatesDialog();
+        updateDialog = new UpdateDialog();
         mainWindow = new MainWindow();
         debugOverlay = new DebugOverlay();
 
+        UpdateManager.startBackgroundChecker(storageProvider, updateDialog::showUpdate);
+
         launch(app);
         System.exit(0);
-
     }
 
     void requestShow() {
@@ -202,6 +231,7 @@ public class BaudBound extends Application {
         programsDialog.render();
         programEditorDialog.render();
         statesDialog.render();
+        updateDialog.render();
 
         debugOverlay.render();
     }
@@ -237,7 +267,7 @@ public class BaudBound extends Application {
                 }
             });
 
-            if (storageProvider.getData().getSettings().getGeneric().isStartHidden()) {
+            if (storageProvider.getData().getSettings().getGeneric().isStartHidden() || args.isHidden()) {
                 GLFW.glfwHideWindow(getHandle());
             }
         }

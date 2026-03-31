@@ -23,8 +23,10 @@ fi.natroutter.baudbound/
 ├── serial/SerialHandler.java          # Connect / disconnect / read loop (per-device)
 ├── serial/DeviceConnectionManager.java # Manages one SerialHandler per DataStore.Device
 ├── storage/                           # DataStore (POJO model) + StorageProvider (load/save)
+├── system/AppArgs.java          # picocli CLI flags (--hidden, --debug, --nogui, --version)
 ├── system/StartupManager.java
 ├── system/ShortcutManager.java
+├── system/UpdateManager.java    # Download-and-restart for JAR self-update
 └── gui/
     ├── MainWindow.java       # Fullscreen event-list window
     ├── DebugOverlay.java     # Real-time debug overlay (FPS, memory, JVM, devices, states)
@@ -35,6 +37,7 @@ fi.natroutter.baudbound/
         ├── BaseDialog.java           # All dialogs extend this
         ├── MessageDialog.java        # Generic popup (does NOT extend BaseDialog)
         ├── AboutDialog / SettingsDialog / EventEditorDialog
+        ├── UpdateDialog.java             # Update available: version info, release notes, download flow
         ├── components/DialogButton.java
         ├── device/   DevicesDialog, DeviceEditorDialog
         ├── webhook/  WebhooksDialog, WebhookEditorDialog

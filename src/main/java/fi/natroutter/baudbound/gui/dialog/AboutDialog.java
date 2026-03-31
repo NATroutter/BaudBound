@@ -1,97 +1,37 @@
 package fi.natroutter.baudbound.gui.dialog;
 
-import fi.natroutter.foxlib.FoxLib;
-import fi.natroutter.foxlib.updates.GitHubVersionChecker;
-import fi.natroutter.foxlib.updates.data.UpdateStatus;
-import fi.natroutter.foxlib.updates.data.VersionInfo;
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import imgui.ImGui;
 
-import java.io.IOException;
-
-
 /**
- * Modal dialog showing application version, update status, developer info, feature list,
- * and system information.
+ * Modal dialog showing static application information: version, build date, description,
+ * developer contact, feature list, and system details.
  * <p>
- * On {@link #show()}, an asynchronous GitHub release check is triggered via
- * {@link #checkForUpdates()}. The result is displayed once available without blocking
- * the render loop. If an update is available, release notes (capped at 10 lines) and a
- * "Download Update" button are shown at the bottom.
+ * Update checking is handled separately via the Help menu "Check for Updates" item,
+ * which uses {@link fi.natroutter.baudbound.system.UpdateManager#checkNow} and opens
+ * {@link UpdateDialog} when a new release is found.
  */
 public class AboutDialog extends BaseDialog {
 
-    private static final String AUTHOR = "NATroutter";
-    private static final String REPO_OWNER = "NATroutter";
-    private static final String REPO_NAME = "BaudBound";
-    private static final String GITHUB = "https://github.com/" + REPO_OWNER + "/" + REPO_NAME;
-    private static final String AUTHOR_GITHUB = "https://github.com/" + REPO_OWNER;
+    private static final String AUTHOR         = "NATroutter";
+    private static final String REPO_OWNER     = "NATroutter";
+    private static final String REPO_NAME      = "BaudBound";
+    private static final String GITHUB         = "https://github.com/" + REPO_OWNER + "/" + REPO_NAME;
+    private static final String AUTHOR_GITHUB  = "https://github.com/" + REPO_OWNER;
     private static final String AUTHOR_WEBSITE = "https://natroutter.fi";
-
-    private VersionInfo versionInfo = null;
-    private boolean checkingForUpdates = false;
-    private String updateStatus = "Checking for updates...";
-
-    /** Triggers an update check (if not already running) and opens the dialog. */
-    @Override
-    public void show() {
-        checkForUpdates();
-        requestOpen();
-    }
-
-    /**
-     * Initiates an asynchronous GitHub release check. No-op if a check is already in
-     * progress or a result has already been received. The result is stored in
-     * {@code versionInfo} and consumed by {@link #render()} on the next frame.
-     */
-    private void checkForUpdates() {
-        if (!checkingForUpdates && versionInfo == null) {
-            checkingForUpdates = true;
-            updateStatus = "Checking for updates...";
-
-            GitHubVersionChecker checker = new GitHubVersionChecker(REPO_OWNER, REPO_NAME, BaudBound.VERSION);
-            checker.setLogger(BaudBound.getLogger());
-            checker.checkForUpdates().thenAccept(info -> {
-                versionInfo = info;
-                checkingForUpdates = false;
-                updateStatus = switch (info.getUpdateAvailable()) {
-                    case YES   -> "Update available!";
-                    case NO    -> "Up to date";
-                    case ERROR -> "Connection failed!";
-                };
-            }).exceptionally(ex -> {
-                checkingForUpdates = false;
-                updateStatus = "Failed to check for updates";
-                BaudBound.getLogger().error("Update check failed: " + ex.getMessage());
-                return null;
-            });
-        }
-    }
 
     @Override
     public void render() {
         if (beginModal("About BaudBound")) {
 
-            ImGui.text("Current Version: " + BaudBound.VERSION);
-
-            if (versionInfo != null) {
-                ImGui.text("Latest Version:  " + versionInfo.getLatestVersion());
-                ImGui.sameLine();
-                switch (versionInfo.getUpdateAvailable()) {
-                    case YES   -> ImGui.textColored(1.0f, 0.8f, 0.0f, 1.0f, "(Update Available!)");
-                    case NO    -> ImGui.textColored(0.0f, 1.0f, 0.0f, 1.0f, "(Up to date)");
-                    case ERROR -> ImGui.textColored(1.0f, 0.0f, 0.0f, 1.0f, "(Connection failed!)");
-                }
-            } else {
-                ImGui.text("Latest Version:  " + updateStatus);
-            }
-
+            ImGui.text("Version:    " + BaudBound.VERSION);
             ImGui.text("Build Date: " + BaudBound.BUILD_DATE);
-            ImGui.spacing();
 
+            ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
+
             ImGui.textWrapped("BaudBound listens to a serial port and fires configurable actions whenever incoming data matches your conditions. Hook up any serial device — a microcontroller, a barcode scanner, a custom sensor — and turn its output into webhooks, launched programs, opened URLs, or simulated keystrokes.");
             ImGui.spacing();
 
@@ -137,38 +77,6 @@ public class AboutDialog extends BaseDialog {
             ImGui.text("  Java Version: " + System.getProperty("java.version"));
             ImGui.text("  OS: " + System.getProperty("os.name") + " " + System.getProperty("os.version"));
             ImGui.text("  Architecture: " + System.getProperty("os.arch"));
-
-            ImGui.spacing();
-
-            if (versionInfo != null && versionInfo.getUpdateAvailable() == UpdateStatus.YES && !versionInfo.getReleaseNotes().isEmpty()) {
-                ImGui.separator();
-                ImGui.spacing();
-                ImGui.text("Release Notes (" + versionInfo.getLatestVersion() + "):");
-                ImGui.beginDisabled();
-                String[] lines = versionInfo.getReleaseNotes().split("\n");
-                int lineCount = 0;
-                for (String line : lines) {
-                    if (lineCount++ > 10) {
-                        ImGui.text("... (see GitHub for full notes)");
-                        break;
-                    }
-                    ImGui.textWrapped(line);
-                }
-                ImGui.endDisabled();
-                ImGui.spacing();
-            }
-
-            if (versionInfo != null && versionInfo.getUpdateAvailable() == UpdateStatus.YES) {
-                ImGui.separator();
-                ImGui.spacing();
-                if (ImGui.button("Download Update", ImGui.getContentRegionAvailX(), 0)) {
-                    try {
-                        FoxLib.openURL(versionInfo.getReleaseUrl());
-                    } catch (IOException e) {
-                        BaudBound.getLogger().error("Failed to open URL '" + versionInfo.getReleaseUrl() + "': " + e.getMessage());
-                    }
-                }
-            }
 
             endModal();
         }

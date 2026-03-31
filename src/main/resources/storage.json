@@ -1,26 +1,27 @@
 {
   "settings": {
-	"generic": {
-	  "start_hidden": false,
-	  "auto_connect": false
-	},
-	"event": {
-	  "run_first_only": true,
-	  "condition_events_first": false,
-	  "skip_empty_conditions": false
-	},
-	"device": {
-	  "port": "COM6",
-	  "baud_rate": 9600,
-	  "data_bits": 8,
-	  "stop_bits": 1,
-	  "parity": "NO",
-	  "flow_control": "DISABLED"
-	}
+    "generic": {
+      "start_hidden": false,
+      "check_for_updates": true
+    },
+    "event": {
+      "run_first_only": true,
+      "condition_events_first": false,
+      "skip_empty_conditions": false
+    },
+    "graphics": {
+      "vsync": true,
+      "fps_limit": 0
+    },
+    "debug": {
+      "overlay": false,
+      "sample_interval": 2
+    }
   },
   "actions": {
-	"webhooks": [],
-	"programs": []
+    "webhooks": [],
+    "programs": []
   },
+  "devices": [],
   "events": []
 }

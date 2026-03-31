@@ -130,6 +130,7 @@ public class EventHandler {
         }
 
         boolean skipEmpty = eventSettings.isSkipEmptyConditions();
+        List<String> firedNames = new java.util.ArrayList<>();
 
         for (DataStore.Event event : events) {
             boolean hasConditions = event.getConditions() != null && !event.getConditions().isEmpty();
@@ -137,8 +138,19 @@ public class EventHandler {
 
             if (matchesConditions(event, input, device)) {
                 fireAction(event, input);
+                firedNames.add(event.getName());
                 if (runFirstOnly) break;
             }
+        }
+
+        String deviceTag = device != null ? " (device: " + device.getName() + ")" : "";
+        if (firedNames.isEmpty()) {
+            if (!events.isEmpty()) {
+                logger.warn("No events matched input: \"" + input + "\"" + deviceTag);
+            }
+        } else {
+            logger.info("Input: \"" + input + "\"" + deviceTag +
+                    " — fired " + firedNames.size() + " event(s): " + String.join(", ", firedNames));
         }
     }
 
