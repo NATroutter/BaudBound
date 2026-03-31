@@ -56,6 +56,7 @@ fi.natroutter.baudbound/
         ├── AboutDialog / SettingsDialog / EventEditorDialog
         ├── UpdateDialog.java             # Update available: version info, release notes, download flow
         ├── LogsDialog.java               # In-session log viewer (Help → Logs); reads BaudBound.logBuffer
+        ├── SimulateDialog.java           # Simulate serial input through the event system (Simulate menu)
         ├── components/DialogButton.java
         ├── device/   DevicesDialog, DeviceEditorDialog
         ├── webhook/  WebhooksDialog, WebhookEditorDialog
