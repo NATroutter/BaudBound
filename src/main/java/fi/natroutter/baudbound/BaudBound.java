@@ -25,6 +25,11 @@ import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.serial.DeviceConnectionManager;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
+import fi.natroutter.baudbound.command.CommandHandler;
+import fi.natroutter.baudbound.command.StatusRegistry;
+import fi.natroutter.baudbound.command.commands.StatusCommand;
+import fi.natroutter.baudbound.command.commands.UpdateCommand;
+import fi.natroutter.baudbound.command.commands.VersionCommand;
 import fi.natroutter.baudbound.system.SingleInstanceManager;
 import imgui.ImGui;
 import imgui.ImGuiIO;
@@ -116,6 +121,9 @@ public class BaudBound extends Application {
 
     private volatile boolean pendingShow = false;
     private volatile boolean pendingExit = false;
+    /** Set from any thread; consumed in {@link #process()} on the GLFW thread to show/hide the window. */
+    private static volatile Boolean pendingGuiVisibility = null;
+    private static volatile boolean guiVisible = true;
 
     private long lastFrameNanos = System.nanoTime();
 
@@ -151,6 +159,25 @@ public class BaudBound extends Application {
         eventHandler = new EventHandler();
         deviceConnectionManager = new DeviceConnectionManager();
         deviceConnectionManager.autoConnectAll(storageProvider.getData().getDevices());
+
+        StatusRegistry statusRegistry = new StatusRegistry();
+        statusRegistry.register("gui", "GUI window visibility",
+                BaudBound::isGuiVisible,
+                visible -> {
+                    if (parsedArgs.isNoGui()) {
+                        FoxLib.println("  {BRIGHT_RED}GUI is not available in headless mode (--nogui).{RESET}");
+                        return;
+                    }
+                    BaudBound.requestGuiVisibility(visible);
+                    FoxLib.println("  {BRIGHT_GREEN}GUI " + (visible ? "enabled" : "disabled") + ".{RESET}");
+                }
+        );
+
+        CommandHandler commandHandler = new CommandHandler();
+        commandHandler.register(new VersionCommand());
+        commandHandler.register(new StatusCommand(statusRegistry));
+        commandHandler.register(new UpdateCommand());
+        commandHandler.startListening();
 
         if (parsedArgs.isNoGui()) {
             logger.info(APP_NAME + " " + VERSION + " running in headless mode — press Ctrl+C to exit.");
@@ -189,6 +216,22 @@ public class BaudBound extends Application {
 
     void requestShow() {
         pendingShow = true;
+    }
+
+    /**
+     * Requests the GUI window to be shown or hidden on the next GLFW frame.
+     * Safe to call from any thread. No-op when running in headless ({@code --nogui}) mode
+     * since the GLFW loop is never started.
+     *
+     * @param visible {@code true} to show the window, {@code false} to hide it
+     */
+    public static void requestGuiVisibility(boolean visible) {
+        pendingGuiVisibility = visible;
+    }
+
+    /** Returns {@code true} if the GUI window is currently visible. */
+    public static boolean isGuiVisible() {
+        return guiVisible;
     }
 
     /**
@@ -240,6 +283,20 @@ public class BaudBound extends Application {
             GLFW.glfwShowWindow(getHandle());
             GLFW.glfwFocusWindow(getHandle());
         }
+
+        Boolean pendingVis = pendingGuiVisibility;
+        if (pendingVis != null) {
+            pendingGuiVisibility = null;
+            guiVisible = pendingVis;
+            if (pendingVis) {
+                GLFW.glfwShowWindow(getHandle());
+                GLFW.glfwFocusWindow(getHandle());
+            } else {
+                GLFW.glfwHideWindow(getHandle());
+            }
+        }
+
+        if (!guiVisible) return;
 
         mainWindow.render();
         messageDialog.render();
