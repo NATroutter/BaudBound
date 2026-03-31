@@ -42,22 +42,28 @@ public class UpdateCommand extends Command {
     // -------------------------------------------------------------------------
 
     private void handleCheck() {
+        log("Console: update check requested");
         FoxLib.println("  {CYAN}Checking for updates...{RESET}");
         VersionInfo info = fetchVersionInfo();
         if (info == null) return;
         showVersionBox(info);
         if (info.getUpdateAvailable() == UpdateStatus.YES) {
+            log("Console: update available — " + info.getCurrentVersion() + " → " + info.getLatestVersion());
             FoxLib.println("  Run {BRIGHT_YELLOW}update install{RESET} to download and restart.");
+        } else {
+            log("Console: update check complete — already up to date (" + info.getCurrentVersion() + ")");
         }
     }
 
     private void handleInstall() {
         Optional<File> jar = UpdateManager.getJarFile();
         if (jar.isEmpty()) {
+            logError("Console: update install failed — not running from a JAR file");
             FoxLib.println("  {BRIGHT_RED}Cannot update: not running from a JAR file.{RESET}");
             return;
         }
 
+        log("Console: update install requested");
         FoxLib.println("  {CYAN}Checking for updates...{RESET}");
         VersionInfo info = fetchVersionInfo();
         if (info == null) return;
@@ -65,10 +71,12 @@ public class UpdateCommand extends Command {
         showVersionBox(info);
 
         if (info.getUpdateAvailable() != UpdateStatus.YES) {
+            log("Console: update install skipped — already up to date");
             FoxLib.println("  {BRIGHT_GREEN}Already up to date — nothing to install.{RESET}");
             return;
         }
 
+        log("Console: downloading update " + info.getCurrentVersion() + " → " + info.getLatestVersion());
         FoxLib.println("  {CYAN}Starting download...{RESET}");
         String url = UpdateManager.buildJarDownloadUrl(info.getReleaseUrl());
         UpdateManager.downloadAndRestart(url, jar.get(),
@@ -78,7 +86,10 @@ public class UpdateCommand extends Command {
                             : formatBytes(downloaded);
                     FoxLib.print("\r  {CYAN}Downloading...{RESET}  {BRIGHT_WHITE}" + progress + "{RESET}   ");
                 },
-                err -> FoxLib.println("\n  {BRIGHT_RED}Download failed: " + err + "{RESET}")
+                err -> {
+                    logError("Console: update download failed: " + err);
+                    FoxLib.println("\n  {BRIGHT_RED}Download failed: " + err + "{RESET}");
+                }
         );
     }
 

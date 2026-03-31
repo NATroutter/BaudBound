@@ -22,9 +22,11 @@ public class ReloadCommand extends Command {
 
     @Override
     public void execute(String[] args) {
+        log("Console: reload requested");
         FoxLib.println("  {CYAN}Reloading configuration...{RESET}");
         BaudBound.getStorageProvider().reload();
         BaudBound.getEventHandler().invalidateSortCache();
+        log("Console: configuration reloaded");
         FoxLib.println("  {BRIGHT_GREEN}Configuration reloaded.{RESET}");
     }
 }

@@ -70,18 +70,22 @@ public class WebhookCommand extends Command {
                 .filter(w -> w.getName().equalsIgnoreCase(name))
                 .findFirst().orElse(null);
         if (webhook == null) {
+            logWarn("Console: webhook fire failed — unknown webhook \"" + name + "\"");
             FoxLib.println("  {BRIGHT_RED}Unknown webhook: \"" + name + "\"{RESET}");
             return;
         }
 
+        log("Console: firing webhook \"" + name + "\" with input: \"" + input + "\"");
         FoxLib.println("  {CYAN}Firing \"" + name + "\" with input: \"" + input + "\"...{RESET}");
         final DataStore.Actions.Webhook resolved = resolveWebhook(webhook, input);
         Thread.ofVirtual().start(() -> {
             HttpHandler.WebhookResult result = HttpHandler.fireWebhook(resolved);
             if (result.success()) {
+                log("Console: webhook \"" + name + "\" responded " + result.statusCode());
                 FoxLib.println("  {BRIGHT_GREEN}\"" + name + "\" responded " + result.statusCode() + ".{RESET}");
             } else {
                 String reason = result.error() != null ? result.error() : "HTTP " + result.statusCode();
+                logError("Console: webhook \"" + name + "\" failed: " + reason);
                 FoxLib.println("  {BRIGHT_RED}\"" + name + "\" failed: " + reason + "{RESET}");
             }
         });
