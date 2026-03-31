@@ -18,8 +18,8 @@ public class VersionCommand extends Command {
     @Override
     public void execute(String[] args) {
         ConsoleUI.printBox(BaudBound.APP_NAME, List.of(
-                "{BLUE}Version   :{RESET}  {CYAN}" + BaudBound.VERSION,
-                "{BLUE}Build date:{RESET}  {CYAN}" + BaudBound.BUILD_DATE
+                "{BLUE}Version    {WHITE}:{RESET} {CYAN}" + BaudBound.VERSION,
+                "{BLUE}Build date {WHITE}:{RESET} {CYAN}" + BaudBound.BUILD_DATE
         ));
     }
 }

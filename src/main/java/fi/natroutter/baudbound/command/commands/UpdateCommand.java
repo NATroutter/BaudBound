@@ -120,7 +120,7 @@ public class UpdateCommand extends Command {
     }
 
     private void showVersionBox(VersionInfo info) {
-        String statusColor = info.getUpdateAvailable() == UpdateStatus.YES ? "{BRIGHT_GREEN}" : "{WHITE}";
+        String statusColor = info.getUpdateAvailable() == UpdateStatus.YES ? "{BRIGHT_GREEN}" : (info.getUpdateAvailable() == UpdateStatus.NO ? "{CYAN}" : "{BRIGHT_RED}");
         String statusText  = switch (info.getUpdateAvailable()) {
             case YES   -> "Update available";
             case NO    -> "Up to date";
@@ -128,9 +128,9 @@ public class UpdateCommand extends Command {
         };
 
         ConsoleUI.printBox("Update Check", List.of(
-                "{BLUE}Current:{RESET}  {WHITE}" + info.getCurrentVersion(),
-                "{BLUE}Latest :{RESET}  {WHITE}" + info.getLatestVersion(),
-                "{BLUE}Status :{RESET}  " + statusColor + statusText
+                "{BLUE}Current{WHITE} :{RESET}  {CYAN}" + info.getCurrentVersion(),
+                "{BLUE}Latest {WHITE} :{RESET}  {CYAN}" + info.getLatestVersion(),
+                "{BLUE}Status {WHITE} :{RESET}  " + statusColor + statusText
         ));
     }
 

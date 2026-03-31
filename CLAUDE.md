@@ -29,7 +29,14 @@ fi.natroutter.baudbound/
 ├── command/StatusRegistry.java        # Registry of named boolean statuses with getter/setter callbacks
 ├── command/commands/VersionCommand.java  # "version" — prints VERSION and BUILD_DATE
 ├── command/commands/StatusCommand.java   # "status [get|set <name> [true|false]]" — read/write named statuses
-└── command/commands/UpdateCommand.java   # "update [check|install]" — check GitHub release and download/restart
+├── command/commands/UpdateCommand.java   # "update [check|install]" — check GitHub release and download/restart
+├── command/commands/DevicesCommand.java  # "devices [connect|disconnect <name>]" — list/connect/disconnect devices
+├── command/commands/SimulateCommand.java # "simulate [<device>] <input>" — inject fake serial input through event system
+├── command/commands/SendCommand.java     # "send <device> <text>" — write raw text to a serial device
+├── command/commands/ReloadCommand.java   # "reload" — reload storage.json from disk without restarting
+├── command/commands/EventsCommand.java   # "events" — list all configured events with condition/action counts
+├── command/commands/WebhookCommand.java  # "webhook [fire <name> [input]]" — list/fire configured webhooks
+└── command/commands/ExitCommand.java     # "exit" — save config, disconnect devices, and exit
 ├── system/AppArgs.java          # picocli CLI flags (--hidden, --debug, --nogui, --version)
 ├── system/StartupManager.java
 ├── system/ShortcutManager.java

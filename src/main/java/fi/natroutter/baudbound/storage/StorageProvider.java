@@ -46,6 +46,14 @@ public class StorageProvider {
                         data = DataStore.fromJson(e.content());
                     }
                 })
+                .onReload(e -> {
+                    if (e.success() && !e.content().isEmpty()) {
+                        data = DataStore.fromJson(e.content());
+                        logger.info("Configuration reloaded from disk");
+                    } else {
+                        logger.error("Failed to reload configuration");
+                    }
+                })
                 .build();
     }
 
@@ -84,6 +92,14 @@ public class StorageProvider {
             base = (xdg != null && !xdg.isEmpty()) ? xdg : home + "/.config";
         }
         return new File(base, BaudBound.APP_NAME);
+    }
+
+    /**
+     * Reloads the {@link DataStore} from disk, replacing the current in-memory state.
+     * Any unsaved in-memory changes are discarded.
+     */
+    public void reload() {
+        manager.reload();
     }
 
     /** Persists the current {@link DataStore} state to disk. No-op if data is null. */

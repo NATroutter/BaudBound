@@ -27,9 +27,16 @@ import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import fi.natroutter.baudbound.command.CommandHandler;
 import fi.natroutter.baudbound.command.StatusRegistry;
+import fi.natroutter.baudbound.command.commands.DevicesCommand;
+import fi.natroutter.baudbound.command.commands.EventsCommand;
+import fi.natroutter.baudbound.command.commands.ExitCommand;
+import fi.natroutter.baudbound.command.commands.ReloadCommand;
+import fi.natroutter.baudbound.command.commands.SendCommand;
+import fi.natroutter.baudbound.command.commands.SimulateCommand;
 import fi.natroutter.baudbound.command.commands.StatusCommand;
 import fi.natroutter.baudbound.command.commands.UpdateCommand;
 import fi.natroutter.baudbound.command.commands.VersionCommand;
+import fi.natroutter.baudbound.command.commands.WebhookCommand;
 import fi.natroutter.baudbound.system.SingleInstanceManager;
 import imgui.ImGui;
 import imgui.ImGuiIO;
@@ -124,6 +131,8 @@ public class BaudBound extends Application {
     /** Set from any thread; consumed in {@link #process()} on the GLFW thread to show/hide the window. */
     private static volatile Boolean pendingGuiVisibility = null;
     private static volatile boolean guiVisible = true;
+    /** Set from any thread (e.g. {@link ExitCommand}); consumed in {@link #process()} to close the window. */
+    private static volatile boolean pendingStaticExit = false;
 
     private long lastFrameNanos = System.nanoTime();
 
@@ -177,6 +186,13 @@ public class BaudBound extends Application {
         commandHandler.register(new VersionCommand());
         commandHandler.register(new StatusCommand(statusRegistry));
         commandHandler.register(new UpdateCommand());
+        commandHandler.register(new DevicesCommand());
+        commandHandler.register(new SimulateCommand());
+        commandHandler.register(new SendCommand());
+        commandHandler.register(new ReloadCommand());
+        commandHandler.register(new EventsCommand());
+        commandHandler.register(new WebhookCommand());
+        commandHandler.register(new ExitCommand());
         commandHandler.startListening();
 
         if (parsedArgs.isNoGui()) {
@@ -235,6 +251,22 @@ public class BaudBound extends Application {
     }
 
     /**
+     * Requests the application to exit cleanly.
+     * <p>
+     * In GUI mode, sets a flag that is consumed by the GLFW thread on the next frame,
+     * allowing {@link #dispose()} to run normally (saves config, disconnects devices).
+     * In headless mode, calls {@link System#exit} directly — the registered shutdown hook
+     * handles cleanup.
+     */
+    public static void requestExit() {
+        if (args != null && args.isNoGui()) {
+            System.exit(0);
+        } else {
+            pendingStaticExit = true;
+        }
+    }
+
+    /**
      * Sleeps the GLFW thread to enforce the configured FPS limit when vsync is disabled.
      * No-op when vsync is enabled (swap interval already limits the frame rate).
      */
@@ -273,7 +305,7 @@ public class BaudBound extends Application {
     public void process() {
         limitFrameRate();
 
-        if (pendingExit) {
+        if (pendingExit || pendingStaticExit) {
             GLFW.glfwSetWindowShouldClose(getHandle(), true);
             return;
         }
