@@ -23,6 +23,13 @@ fi.natroutter.baudbound/
 ├── serial/SerialHandler.java          # Connect / disconnect / read loop (per-device)
 ├── serial/DeviceConnectionManager.java # Manages one SerialHandler per DataStore.Device
 ├── storage/                           # DataStore (POJO model) + StorageProvider (load/save)
+├── command/Command.java               # Abstract base — subclasses call super(name, description) and implement execute()
+├── command/CommandHandler.java        # Registers commands, reads System.in on a virtual thread, dispatches by name; built-in "help"
+├── command/ConsoleUI.java             # Box-drawing renderer for System.out output (╔═╟─╚ style)
+├── command/StatusRegistry.java        # Registry of named boolean statuses with getter/setter callbacks
+├── command/commands/VersionCommand.java  # "version" — prints VERSION and BUILD_DATE
+├── command/commands/StatusCommand.java   # "status [get|set <name> [true|false]]" — read/write named statuses
+└── command/commands/UpdateCommand.java   # "update [check|install]" — check GitHub release and download/restart
 ├── system/AppArgs.java          # picocli CLI flags (--hidden, --debug, --nogui, --version)
 ├── system/StartupManager.java
 ├── system/ShortcutManager.java
