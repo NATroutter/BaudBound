@@ -55,20 +55,32 @@ public class MenuBar {
                 ImGui.endMenu();
             }
 
-            if (ImGui.menuItem("States")) {
-                statesDialog.show();
-            }
+            if (ImGui.beginMenu("Debug")) {
 
-            if (ImGui.menuItem("Simulate")) {
-                simulateDialog.show();
+                if (ImGui.menuItem("Simulate")) {
+                    simulateDialog.show();
+                }
+
+                if (ImGui.menuItem("Logs")) {
+                    BaudBound.getLogsDialog().show();
+                }
+
+                if (ImGui.menuItem("States")) {
+                    statesDialog.show();
+                }
+
+                boolean overlayEnabled = storage.getData().getSettings().getDebug().isOverlay();
+                if (ImGui.menuItem("Debug Overlay", "", overlayEnabled)) {
+                    storage.getData().getSettings().getDebug().setOverlay(!overlayEnabled);
+                    storage.save();
+                }
+
+                ImGui.endMenu();
             }
 
             if (ImGui.beginMenu("Help")) {
                 if (ImGui.menuItem("About")) {
                     aboutDialog.show();
-                }
-                if (ImGui.menuItem("Logs")) {
-                    BaudBound.getLogsDialog().show();
                 }
                 ImGui.separator();
                 ImGui.beginDisabled(checkingForUpdates);
@@ -94,12 +106,6 @@ public class MenuBar {
                     );
                 }
                 ImGui.endDisabled();
-                ImGui.separator();
-                boolean overlayEnabled = storage.getData().getSettings().getDebug().isOverlay();
-                if (ImGui.menuItem("Debug Overlay", "", overlayEnabled)) {
-                    storage.getData().getSettings().getDebug().setOverlay(!overlayEnabled);
-                    storage.save();
-                }
                 ImGui.endMenu();
             }
             ImGui.endMenuBar();
