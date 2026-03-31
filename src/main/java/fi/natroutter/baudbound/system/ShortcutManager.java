@@ -1,6 +1,7 @@
 package fi.natroutter.baudbound.system;
 
 import fi.natroutter.baudbound.BaudBound;
+import fi.natroutter.baudbound.storage.StorageProvider;
 
 import java.io.File;
 import java.io.InputStream;
@@ -133,12 +134,14 @@ public class ShortcutManager {
     // -------------------------------------------------------------------------
 
     /**
-     * Extracts an icon resource from the JAR to a file next to the JAR,
-     * returning its absolute path. Skips extraction if the file already exists.
+     * Returns the absolute path to the icon file in the config directory.
+     * The file is already exported there by {@link StorageProvider} on startup;
+     * this method just builds the expected path for the given extension.
+     * If the requested extension differs from {@code .png} (e.g. {@code .ico} on Windows)
+     * it extracts the resource fresh from the JAR into the config dir.
      */
     private static String extractIcon(String resource, String extension) throws Exception {
-        File jar = new File(jarPath());
-        File iconFile = new File(jar.getParent(), BaudBound.APP_NAME + extension);
+        File iconFile = new File(StorageProvider.getConfigDir(), BaudBound.APP_NAME + extension);
         if (!iconFile.exists()) {
             try (InputStream is = ShortcutManager.class.getResourceAsStream("/" + resource)) {
                 if (is == null) throw new Exception("Icon resource not found: " + resource);

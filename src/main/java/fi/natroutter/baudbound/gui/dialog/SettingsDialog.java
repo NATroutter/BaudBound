@@ -49,6 +49,12 @@ public class SettingsDialog extends BaseDialog {
         load();
     }
 
+    @Override
+    public void show() {
+        load();
+        super.show();
+    }
+
     public void render() {
         if (beginModal("Settings")) {
 

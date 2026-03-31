@@ -251,6 +251,21 @@ public class BaudBound extends Application {
         io.setIniFilename(null);
         io.addConfigFlags(ImGuiConfigFlags.NavEnableKeyboard);
         GuiTheme.applyDarkRuda();
+
+        // Match the OpenGL clear color to the dark theme WindowBg so no white
+        // bleed-through appears at window edges on Linux.
+        colorBg.set(GuiTheme.COLOR_WINDOW_BG.x, GuiTheme.COLOR_WINDOW_BG.y, GuiTheme.COLOR_WINDOW_BG.z, GuiTheme.COLOR_WINDOW_BG.w);
+
+        // On HiDPI / fractional-scaled Linux displays (and macOS retina), the window
+        // content scale can be > 1.  Scale ImGui's global font size and all style sizes
+        // so the UI is legible at the physical resolution.
+        float[] xScale = {1f}, yScale = {1f};
+        GLFW.glfwGetWindowContentScale(getHandle(), xScale, yScale);
+        float scale = Math.max(xScale[0], yScale[0]);
+        if (scale > 1.0f) {
+            io.setFontGlobalScale(scale);
+            ImGui.getStyle().scaleAllSizes(scale);
+        }
     }
 
     @Override

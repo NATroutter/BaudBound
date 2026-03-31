@@ -37,6 +37,9 @@ public class GuiTheme {
     /** Light blue used for clickable link text and underlines. */
     public static final ImVec4 COLOR_LINK = new ImVec4(0.3f, 0.7f, 1.0f, 1.0f);
 
+    /** Main window background color — used as the ImGui {@code WindowBg} and the GL clear color. */
+    public static final ImVec4 COLOR_WINDOW_BG = new ImVec4(0.10980392f, 0.14901961f, 0.16862746f, 1.0f);
+
     /** Returns the packed ABGR integer for the given color, usable with draw-list and table APIs. */
     public static int colorU32(ImVec4 c) {
         return ImGui.getColorU32(c.x, c.y, c.z, c.w);
@@ -81,7 +84,7 @@ public static void applyDarkRuda() {
 
     style.setColor(ImGuiCol.Text, 0.9490196f, 0.95686275f, 0.9764706f, 1.0f);
     style.setColor(ImGuiCol.TextDisabled, 0.35686275f, 0.41960785f, 0.46666667f, 1.0f);
-    style.setColor(ImGuiCol.WindowBg, 0.10980392f, 0.14901961f, 0.16862746f, 1.0f);
+    style.setColor(ImGuiCol.WindowBg, COLOR_WINDOW_BG.x, COLOR_WINDOW_BG.y, COLOR_WINDOW_BG.z, COLOR_WINDOW_BG.w);
     style.setColor(ImGuiCol.ChildBg, 0.14901961f, 0.1764706f, 0.21960784f, 1.0f);
     style.setColor(ImGuiCol.PopupBg, 0.078431375f, 0.078431375f, 0.078431375f, 0.94f);
     style.setColor(ImGuiCol.Border, 0.078431375f, 0.09803922f, 0.11764706f, 1.0f);

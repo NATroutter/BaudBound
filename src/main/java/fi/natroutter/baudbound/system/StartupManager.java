@@ -1,5 +1,7 @@
 package fi.natroutter.baudbound.system;
 
+import fi.natroutter.baudbound.storage.StorageProvider;
+
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -162,14 +164,16 @@ public class StartupManager {
 
     private static void enableLinux() throws Exception {
         String exec = "\"" + javaExecutable() + "\" -jar \"" + jarPath() + "\"";
+        String icon = new File(StorageProvider.getConfigDir(), "icon.png").getAbsolutePath();
         String desktop = """
                 [Desktop Entry]
                 Type=Application
                 Name=%s
                 Exec=%s
+                Icon=%s
                 Hidden=false
                 X-GNOME-Autostart-enabled=true
-                """.formatted(APP_NAME, exec);
+                """.formatted(APP_NAME, exec, icon);
 
         Path path = desktopPath();
         Files.createDirectories(path.getParent());

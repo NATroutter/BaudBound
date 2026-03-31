@@ -8,6 +8,7 @@ import fi.natroutter.baudbound.gui.dialog.StatesDialog;
 import fi.natroutter.baudbound.gui.dialog.device.DevicesDialog;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
+import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
 
 /**
@@ -25,6 +26,7 @@ public class MenuBar {
     private final WebhooksDialog webhooksDialog = BaudBound.getWebhooksDialog();
     private final ProgramsDialog programDialog  = BaudBound.getProgramsDialog();
     private final StatesDialog statesDialog     = BaudBound.getStatesDialog();
+    private final StorageProvider storage       = BaudBound.getStorageProvider();
 
 
     public void render() {
@@ -54,6 +56,12 @@ public class MenuBar {
             if (ImGui.beginMenu("Help")) {
                 if (ImGui.menuItem("About")) {
                     aboutDialog.show();
+                }
+                ImGui.separator();
+                boolean overlayEnabled = storage.getData().getSettings().getDebug().isOverlay();
+                if (ImGui.menuItem("Debug Overlay", "", overlayEnabled)) {
+                    storage.getData().getSettings().getDebug().setOverlay(!overlayEnabled);
+                    storage.save();
                 }
                 ImGui.endMenu();
             }
