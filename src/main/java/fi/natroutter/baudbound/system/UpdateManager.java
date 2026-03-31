@@ -36,9 +36,9 @@ public class UpdateManager {
 
     /**
      * Starts a background virtual thread that periodically checks GitHub for a new release.
-     * Waits {@value #INITIAL_DELAY_MS} ms before the first check, then repeats every
-     * {@value #CHECK_INTERVAL_MS} ms. Checks are skipped when
-     * {@link fi.natroutter.baudbound.storage.DataStore.Settings.Generic#isCheckForUpdates()}
+     * Runs immediately on startup, then repeats every {@value #CHECK_INTERVAL_MS} ms.
+     * Checks are skipped when
+     * {@link fi.natroutter.baudbound.storage.DataStore.Settings.Generic#isCheckForUpdatesEnabled()}
      * is {@code false}. When an update is found it is logged at INFO level; {@code onUpdateFound}
      * is called so the caller can take additional action (e.g. showing a dialog).
      *
