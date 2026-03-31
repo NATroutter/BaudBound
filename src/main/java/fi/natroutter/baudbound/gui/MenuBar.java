@@ -4,6 +4,7 @@ import fi.natroutter.foxlib.updates.data.UpdateStatus;
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.gui.dialog.AboutDialog;
 import fi.natroutter.baudbound.gui.dialog.SettingsDialog;
+import fi.natroutter.baudbound.gui.dialog.SimulateDialog;
 import fi.natroutter.baudbound.gui.dialog.StatesDialog;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
 import fi.natroutter.baudbound.gui.dialog.device.DevicesDialog;
@@ -27,8 +28,9 @@ public class MenuBar {
     private final DevicesDialog devicesDialog   = BaudBound.getDevicesDialog();
     private final WebhooksDialog webhooksDialog = BaudBound.getWebhooksDialog();
     private final ProgramsDialog programDialog  = BaudBound.getProgramsDialog();
-    private final StatesDialog statesDialog     = BaudBound.getStatesDialog();
-    private final StorageProvider storage       = BaudBound.getStorageProvider();
+    private final StatesDialog statesDialog       = BaudBound.getStatesDialog();
+    private final SimulateDialog simulateDialog   = BaudBound.getSimulateDialog();
+    private final StorageProvider storage         = BaudBound.getStorageProvider();
 
     private volatile boolean checkingForUpdates = false;
 
@@ -55,6 +57,10 @@ public class MenuBar {
 
             if (ImGui.menuItem("States")) {
                 statesDialog.show();
+            }
+
+            if (ImGui.menuItem("Simulate")) {
+                simulateDialog.show();
             }
 
             if (ImGui.beginMenu("Help")) {

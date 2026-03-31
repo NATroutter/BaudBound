@@ -9,6 +9,7 @@ import fi.natroutter.baudbound.event.EventHandler;
 import fi.natroutter.foxlib.FoxLib;
 import fi.natroutter.foxlib.logger.FoxLogger;
 import fi.natroutter.baudbound.gui.dialog.LogsDialog;
+import fi.natroutter.baudbound.gui.dialog.SimulateDialog;
 import fi.natroutter.foxlib.logger.types.LogLevel;
 import fi.natroutter.baudbound.gui.DebugOverlay;
 import fi.natroutter.baudbound.gui.MainWindow;
@@ -123,6 +124,7 @@ public class BaudBound extends Application {
     @Getter private static StatesDialog statesDialog;
     @Getter private static UpdateDialog updateDialog;
     @Getter private static LogsDialog logsDialog;
+    @Getter private static SimulateDialog simulateDialog;
 
     private static MainWindow mainWindow;
     private static DebugOverlay debugOverlay;
@@ -227,6 +229,7 @@ public class BaudBound extends Application {
         statesDialog = new StatesDialog();
         updateDialog = new UpdateDialog();
         logsDialog = new LogsDialog();
+        simulateDialog = new SimulateDialog();
         mainWindow = new MainWindow();
         debugOverlay = new DebugOverlay();
 
@@ -350,6 +353,7 @@ public class BaudBound extends Application {
         statesDialog.render();
         updateDialog.render();
         logsDialog.render();
+        simulateDialog.render();
 
         debugOverlay.render();
     }
