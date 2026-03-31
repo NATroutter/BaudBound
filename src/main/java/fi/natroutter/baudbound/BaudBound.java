@@ -8,6 +8,8 @@ import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.event.EventHandler;
 import fi.natroutter.foxlib.FoxLib;
 import fi.natroutter.foxlib.logger.FoxLogger;
+import fi.natroutter.baudbound.gui.dialog.LogsDialog;
+import fi.natroutter.foxlib.logger.types.LogLevel;
 import fi.natroutter.baudbound.gui.DebugOverlay;
 import fi.natroutter.baudbound.gui.MainWindow;
 import fi.natroutter.baudbound.gui.dialog.AboutDialog;
@@ -39,7 +41,10 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.CopyOnWriteArrayList;
 import javax.imageio.ImageIO;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.glfw.GLFWImage;
@@ -74,6 +79,17 @@ public class BaudBound extends Application {
         BUILD_DATE = props.getProperty("build.date", "unknown");
     }
 
+    private static final int MAX_LOG_ENTRIES = 2000;
+    @Getter private static final List<LogEntry> logBuffer = new CopyOnWriteArrayList<>();
+
+    /**
+     * A single captured log entry delivered via {@link FoxLogger.Builder#setOnEntry}.
+     *
+     * @param level   the log level
+     * @param message the formatted message — {@code [timestamp][loggerName][LEVEL] text}
+     */
+    public record LogEntry(LogLevel level, String message) {}
+
     @Getter private static AppArgs args;
     @Getter private static FoxLogger logger;
     @Getter private static StorageProvider storageProvider;
@@ -91,6 +107,7 @@ public class BaudBound extends Application {
     @Getter private static EventEditorDialog eventEditorDialog;
     @Getter private static StatesDialog statesDialog;
     @Getter private static UpdateDialog updateDialog;
+    @Getter private static LogsDialog logsDialog;
 
     private static MainWindow mainWindow;
     private static DebugOverlay debugOverlay;
@@ -118,6 +135,10 @@ public class BaudBound extends Application {
                 .setPruneOlderThanDays(35)
                 .setSaveIntervalSeconds(300)
                 .setLoggerName(APP_NAME)
+                .setOnEntry((level, msg) -> {
+                    logBuffer.add(new LogEntry(level, msg));
+                    if (logBuffer.size() > MAX_LOG_ENTRIES) logBuffer.remove(0);
+                })
                 .build();
 
         BaudBound app = new BaudBound();
@@ -156,6 +177,7 @@ public class BaudBound extends Application {
         eventEditorDialog = new EventEditorDialog();
         statesDialog = new StatesDialog();
         updateDialog = new UpdateDialog();
+        logsDialog = new LogsDialog();
         mainWindow = new MainWindow();
         debugOverlay = new DebugOverlay();
 
@@ -232,6 +254,7 @@ public class BaudBound extends Application {
         programEditorDialog.render();
         statesDialog.render();
         updateDialog.render();
+        logsDialog.render();
 
         debugOverlay.render();
     }

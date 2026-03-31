@@ -61,6 +61,9 @@ public class MenuBar {
                 if (ImGui.menuItem("About")) {
                     aboutDialog.show();
                 }
+                if (ImGui.menuItem("Logs")) {
+                    BaudBound.getLogsDialog().show();
+                }
                 ImGui.separator();
                 ImGui.beginDisabled(checkingForUpdates);
                 if (ImGui.menuItem(checkingForUpdates ? "Checking..." : "Check for Updates")) {
