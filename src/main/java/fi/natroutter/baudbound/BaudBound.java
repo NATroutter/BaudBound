@@ -30,9 +30,12 @@ import fi.natroutter.baudbound.command.StatusRegistry;
 import fi.natroutter.baudbound.command.commands.DevicesCommand;
 import fi.natroutter.baudbound.command.commands.EventsCommand;
 import fi.natroutter.baudbound.command.commands.ExitCommand;
+import fi.natroutter.baudbound.command.commands.PortsCommand;
+import fi.natroutter.baudbound.command.commands.ProgramsCommand;
 import fi.natroutter.baudbound.command.commands.ReloadCommand;
 import fi.natroutter.baudbound.command.commands.SendCommand;
 import fi.natroutter.baudbound.command.commands.SimulateCommand;
+import fi.natroutter.baudbound.command.commands.StatesCommand;
 import fi.natroutter.baudbound.command.commands.StatusCommand;
 import fi.natroutter.baudbound.command.commands.UpdateCommand;
 import fi.natroutter.baudbound.command.commands.VersionCommand;
@@ -192,6 +195,9 @@ public class BaudBound extends Application {
         commandHandler.register(new ReloadCommand());
         commandHandler.register(new EventsCommand());
         commandHandler.register(new WebhookCommand());
+        commandHandler.register(new ProgramsCommand());
+        commandHandler.register(new PortsCommand());
+        commandHandler.register(new StatesCommand());
         commandHandler.register(new ExitCommand());
         commandHandler.startListening();
 
