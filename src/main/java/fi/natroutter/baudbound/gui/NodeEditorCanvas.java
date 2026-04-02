@@ -61,6 +61,9 @@ public class NodeEditorCanvas {
     /** When {@code true}, {@link NodeEditor#navigateToContent()} is called at end of next frame. */
     private boolean pendingNavigate = false;
 
+    /** Canvas-space coordinates of the visible center — updated every frame for spawn placement. */
+    private float spawnX = 0f, spawnY = 0f;
+
     // ---- Layout constants ----
     /** Side length of the invisible dummy widget used as a pin hit-target. */
     private static final float PIN_SIZE   = 12f;
@@ -89,7 +92,20 @@ public class NodeEditorCanvas {
     public void render(DataStore.Event event, StorageProvider storage) {
         ensureContext();
         NodeEditor.setCurrentEditor(context);
+
+        // Capture the screen position of the top-left corner of the editor widget before entering
+        // the NodeEditor context, so we can compute the visible canvas center for spawn placement.
+        ImVec2 editorTopLeft = ImGui.getCursorScreenPos();
+
         NodeEditor.begin("##ne");
+
+        // Update spawn position to the canvas-space coordinates of the visible center.
+        ImVec2 editorSize = NodeEditor.getScreenSize();
+        ImVec2 center = NodeEditor.screenToCanvas(
+                editorTopLeft.x + editorSize.x * 0.5f,
+                editorTopLeft.y + editorSize.y * 0.5f);
+        spawnX = center.x;
+        spawnY = center.y;
 
         if (event.getNodes() != null) {
             for (DataStore.Event.Node node : event.getNodes()) {
@@ -132,9 +148,8 @@ public class NodeEditorCanvas {
         DataStore.Event.Node node = new DataStore.Event.Node();
         node.setId(UUID.randomUUID().toString());
         node.setType(nodeType);
-        int count = event.getNodes() == null ? 0 : event.getNodes().size();
-        node.setX(80f + count * 20f);
-        node.setY(80f + count * 20f);
+        node.setX(spawnX);
+        node.setY(spawnY);
         node.setParams(new HashMap<>());
         if (event.getNodes() == null || !(event.getNodes() instanceof ArrayList)) {
             event.setNodes(event.getNodes() == null ? new ArrayList<>() : new ArrayList<>(event.getNodes()));
