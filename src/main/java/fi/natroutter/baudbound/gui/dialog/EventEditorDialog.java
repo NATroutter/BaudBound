@@ -4,6 +4,7 @@ import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.ActionType;
 import fi.natroutter.baudbound.enums.ConditionType;
 import fi.natroutter.baudbound.enums.DialogMode;
+import fi.natroutter.baudbound.enums.TriggerSource;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
@@ -43,6 +44,9 @@ public class EventEditorDialog extends BaseDialog {
     private final StorageProvider storage = BaudBound.getStorageProvider();
 
     private final ImString fieldName = new ImString();
+
+    // Trigger sources — parallel to TriggerSource.values(); initialized with SERIAL checked
+    private ImBoolean[] fieldTriggerSources = initTriggerSourceDefaults();
 
     // Conditions
     private final List<ImString[]> fieldConditions                = new ArrayList<>();
@@ -92,15 +96,35 @@ public class EventEditorDialog extends BaseDialog {
             this.editing = event;
             fieldName.set(event.getName());
 
+            List<String> savedSources = event.getEffectiveTriggerSources();
+            TriggerSource[] allSrc = TriggerSource.values();
+            fieldTriggerSources = new ImBoolean[allSrc.length];
+            for (int i = 0; i < allSrc.length; i++) {
+                String name = allSrc[i].name();
+                fieldTriggerSources[i] = new ImBoolean(savedSources.stream().anyMatch(s -> s.equalsIgnoreCase(name)));
+            }
+
             if (event.getConditions() != null) {
                 for (DataStore.Event.Condition c : event.getConditions()) {
                     ConditionType condType = ConditionType.getByName(c.getType());
                     ImString stateName = new ImString(128);
                     ImString val = new ImString(256);
-                    if ((condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS) && c.getValue() != null) {
+                    if ((condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS
+                            || condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN
+                            || condType == ConditionType.STATE_BETWEEN) && c.getValue() != null) {
                         String[] parts = c.getValue().split("\\|", 2);
                         if (parts.length == 2) { stateName.set(parts[0].trim()); val.set(parts[1]); }
                         else { val.set(c.getValue()); }
+                    } else if (condType == ConditionType.WEBSOCKET_HAS_PARAM && c.getValue() != null) {
+                        stateName.set(c.getValue().trim());
+                    } else if ((condType == ConditionType.WEBSOCKET_PARAM_EQUALS
+                            || condType == ConditionType.WEBSOCKET_PARAM_NOT_EQUALS
+                            || condType == ConditionType.WEBSOCKET_PARAM_CONTAINS
+                            || condType == ConditionType.WEBSOCKET_PARAM_STARTS_WITH
+                            || condType == ConditionType.WEBSOCKET_PARAM_ENDS_WITH) && c.getValue() != null) {
+                        String[] parts = c.getValue().split("\\|", 2);
+                        if (parts.length == 2) { stateName.set(parts[0].trim()); val.set(parts[1]); }
+                        else { stateName.set(c.getValue().trim()); }
                     } else {
                         val.set(c.getValue() != null ? c.getValue() : "");
                     }
@@ -176,8 +200,14 @@ public class EventEditorDialog extends BaseDialog {
                             }
                             textVal.set(parts.length == 2 ? parts[1] : "");
                         }
+                        case SEND_WEBSOCKET -> {
+                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
+                            textVal.set(parts.length >= 1 ? parts[0] : "");       // channel
+                            secondaryVal.set(parts.length == 2 ? parts[1] : "");  // message
+                        }
                         case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                             PLAY_SOUND, CLEAR_STATE -> textVal.set(a.getValue() != null ? a.getValue() : "");
+                             PLAY_SOUND, CLEAR_STATE,
+                             RUN_COMMAND -> textVal.set(a.getValue() != null ? a.getValue() : "");
                     }
                     fieldActionComboIndices.add(comboVal);
                     fieldActionValues.add(textVal);
@@ -187,6 +217,7 @@ public class EventEditorDialog extends BaseDialog {
         } else {
             this.editing = null;
             fieldName.set("");
+            fieldTriggerSources = initTriggerSourceDefaults();
         }
 
         requestOpen();
@@ -196,24 +227,16 @@ public class EventEditorDialog extends BaseDialog {
         String title = mode.getType() + " Event";
         if (beginModal(title)) {
 
-            if (ImGui.beginChild("##instructions_wrap", ImGui.getContentRegionAvailX(), 0, ImGuiChildFlags.AutoResizeY)) {
-                if (ImGui.collapsingHeader("Instructions")) {
-                    ImGui.indent(8);
-                    ImGui.spacing();
-                    GuiHelper.instructions("the value fields");
-                    ImGui.spacing();
-                    renderActionHints();
-                    ImGui.spacing();
-                    ImGui.unindent(8);
-                }
-            }
-            ImGui.endChild();
-            ImGui.spacing();
-
             ImGui.text("Name");
             GuiHelper.toolTip("Name of the event as shown in the event list.");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
             ImGui.inputText("##name", fieldName);
+
+            ImGui.spacing();
+            ImGui.text("Trigger Sources");
+            GuiHelper.toolTip("Which trigger sources can fire this event.");
+            ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+            GuiHelper.multiSelectCombo("##triggersources", TriggerSource.asFriendlyArray(), fieldTriggerSources);
 
             ImGui.spacing();
             ImGui.separator();
@@ -262,79 +285,6 @@ public class EventEditorDialog extends BaseDialog {
         }
     }
 
-    private void renderActionHints() {
-        ImGui.spacing();
-        ImGui.text("Action format hints");
-        ImGui.beginDisabled();
-
-        ImGui.text("Open URL:");
-        ImGui.bulletText("Opens the URL in the default system browser.");
-        ImGui.bulletText("{input} can be used anywhere in the URL.");
-        ImGui.bulletText("Example: https://example.com/item/{input}");
-
-        ImGui.spacing();
-        ImGui.text("Type Text:");
-        ImGui.bulletText("Writes text by placing it on the clipboard and sending Ctrl+V.");
-        ImGui.bulletText("The clipboard contents will be replaced each time this fires.");
-        ImGui.bulletText("Make sure the target window is focused before the trigger fires.");
-
-        ImGui.spacing();
-        ImGui.text("Copy to Clipboard:");
-        ImGui.bulletText("Text is placed in the clipboard without pasting.");
-
-        ImGui.spacing();
-        ImGui.text("Write to File / Append to File:");
-        ImGui.bulletText("Path: the file to write or append to.");
-        ImGui.bulletText("Content: optional template; defaults to \"{timestamp}: {input}\".");
-        ImGui.bulletText("{input} and {timestamp} can be used in both fields.");
-
-        ImGui.spacing();
-        ImGui.text("Show Notification:");
-        ImGui.bulletText("Select the notification type (INFO, WARNING, ERROR, NONE).");
-        ImGui.bulletText("Enter the message text. {input} and {timestamp} are supported.");
-
-        ImGui.spacing();
-        ImGui.text("Play Sound:");
-        ImGui.bulletText("Value: path to a .wav file.");
-        ImGui.bulletText("Leave empty to play the system beep.");
-
-        ImGui.spacing();
-        ImGui.text("Set State:");
-        ImGui.bulletText("State name: optional; leave blank to set the default state.");
-        ImGui.bulletText("Value: the value to assign to the state.");
-
-        ImGui.spacing();
-        ImGui.text("Clear State:");
-        ImGui.bulletText("Leave blank to clear the default state.");
-        ImGui.bulletText("Value: name - clears the named state 'name'.");
-
-        ImGui.spacing();
-        ImGui.text("Send to Device:");
-        ImGui.bulletText("Sends data to a connected serial device.");
-        ImGui.bulletText("Select the target device, then enter the data to send.");
-        ImGui.bulletText("{input} and {timestamp} can be used in the data field.");
-        ImGui.bulletText("No line ending is appended automatically.");
-
-        ImGui.endDisabled();
-
-        ImGui.spacing();
-        ImGui.text("Condition format hints");
-        ImGui.beginDisabled();
-
-        ImGui.text("State Equals / State Not Equals:");
-        ImGui.bulletText("State name: optional; leave blank to check the default state.");
-        ImGui.bulletText("Expected value: the value the state must equal (or not equal).");
-
-        ImGui.spacing();
-        ImGui.text("State Is Empty:");
-        ImGui.bulletText("Leave blank to check the default state.");
-        ImGui.bulletText("Value: name - checks if state 'name' is unset.");
-
-        ImGui.spacing();
-
-        ImGui.endDisabled();
-    }
-
     private void renderConditionsTable() {
         int removeIndex = -1, moveUpIndex = -1, moveDownIndex = -1;
 
@@ -369,28 +319,45 @@ public class EventEditorDialog extends BaseDialog {
                 ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
                 if (condType == ConditionType.DEVICE_EQUALS || condType == ConditionType.DEVICE_NOT_EQUALS) {
                     if (deviceNames.length > 0) {
-                        ImBoolean[] sel = fieldConditionDeviceSelections.get(i);
-                        StringBuilder previewSb = new StringBuilder();
-                        for (int j = 0; j < sel.length; j++) {
-                            if (sel[j].get()) { if (!previewSb.isEmpty()) previewSb.append(", "); previewSb.append(deviceNames[j]); }
-                        }
-                        String preview = previewSb.isEmpty() ? "None" : previewSb.toString();
-                        if (ImGui.beginCombo("##cdev" + i, preview)) {
-                            for (int j = 0; j < deviceNames.length; j++) {
-                                ImGui.checkbox(deviceNames[j] + "##cdevchk" + i + "_" + j, sel[j]);
-                            }
-                            ImGui.endCombo();
-                        }
+                        GuiHelper.multiSelectCombo("##cdev" + i, deviceNames, fieldConditionDeviceSelections.get(i));
                     } else {
                         ImGui.textDisabled("No devices");
                     }
-                } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS) {
+                } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS
+                        || condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN
+                        || condType == ConditionType.STATE_BETWEEN) {
                     float nameW = ImGui.getContentRegionAvailX() * 0.4f;
                     ImGui.setNextItemWidth(nameW);
                     ImGui.inputTextWithHint("##cname" + i, "State name (default)", fieldConditions.get(i)[0]);
                     ImGui.sameLine();
                     ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                    String valHint = condType == ConditionType.STATE_BETWEEN ? "min,max (e.g. 10,50)"
+                            : (condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN) ? "Number (e.g. 42)"
+                            : "Expected value";
+                    ImGui.inputTextWithHint("##cval" + i, valHint, fieldConditions.get(i)[1]);
+                } else if (condType == ConditionType.STATE_IS_NUMERIC || condType == ConditionType.STATE_IS_EMPTY) {
+                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                    ImGui.inputTextWithHint("##cval" + i, "State name (blank = default)", fieldConditions.get(i)[1]);
+                } else if (condType == ConditionType.WEBSOCKET_HAS_PARAM) {
+                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                    ImGui.inputTextWithHint("##cname" + i, "Parameter name", fieldConditions.get(i)[0]);
+                } else if (condType == ConditionType.WEBSOCKET_PARAM_EQUALS
+                        || condType == ConditionType.WEBSOCKET_PARAM_NOT_EQUALS
+                        || condType == ConditionType.WEBSOCKET_PARAM_CONTAINS
+                        || condType == ConditionType.WEBSOCKET_PARAM_STARTS_WITH
+                        || condType == ConditionType.WEBSOCKET_PARAM_ENDS_WITH) {
+                    float nameW = ImGui.getContentRegionAvailX() * 0.4f;
+                    ImGui.setNextItemWidth(nameW);
+                    ImGui.inputTextWithHint("##cname" + i, "Parameter name", fieldConditions.get(i)[0]);
+                    ImGui.sameLine();
+                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
                     ImGui.inputTextWithHint("##cval" + i, "Expected value", fieldConditions.get(i)[1]);
+                } else if (condType == ConditionType.WEBSOCKET_CHANNEL_EQUALS
+                        || condType == ConditionType.WEBSOCKET_CHANNEL_NOT_EQUALS
+                        || condType == ConditionType.WEBSOCKET_CHANNEL_STARTS_WITH
+                        || condType == ConditionType.WEBSOCKET_CHANNEL_CONTAINS) {
+                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                    ImGui.inputTextWithHint("##cval" + i, "Channel path (e.g. /sensors/temp)", fieldConditions.get(i)[1]);
                 } else {
                     ImGui.beginDisabled(noValue);
                     ImGui.inputText("##cval" + i, fieldConditions.get(i)[1]);
@@ -531,6 +498,16 @@ public class EventEditorDialog extends BaseDialog {
                         ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
                         ImGui.inputTextWithHint("##atext" + i, "Value", fieldActionValues.get(i));
                     }
+                    case SEND_WEBSOCKET -> {
+                        float chanW = ImGui.getContentRegionAvailX() * 0.4f;
+                        ImGui.setNextItemWidth(chanW);
+                        ImGui.inputTextWithHint("##atext" + i, "Channel (blank = reply)", fieldActionValues.get(i));
+                        ImGui.sameLine();
+                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
+                        ImGui.inputTextWithHint("##asec" + i, "Message ({input}, {channel})", fieldActionSecondaryValues.get(i));
+                    }
+                    case RUN_COMMAND ->
+                        ImGui.inputTextWithHint("##atext" + i, "Command ({input}, {timestamp})", fieldActionValues.get(i));
                     case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
                          PLAY_SOUND, CLEAR_STATE -> ImGui.inputText("##atext" + i, fieldActionValues.get(i));
                 }
@@ -587,20 +564,20 @@ public class EventEditorDialog extends BaseDialog {
             String label = "Condition " + (i + 1) + " (" + type.getFriendlyName() + "): ";
 
             switch (type) {
-                case STARTS_WITH, ENDS_WITH, CONTAINS, NOT_CONTAINS, NOT_STARTS_WITH, EQUALS -> {
+                case INPUT_STARTS_WITH, INPUT_ENDS_WITH, INPUT_CONTAINS, INPUT_NOT_CONTAINS, INPUT_NOT_STARTS_WITH, INPUT_EQUALS -> {
                     if (val.isEmpty()) return label + "value cannot be empty.";
                 }
-                case REGEX -> {
+                case INPUT_REGEX -> {
                     if (val.isEmpty()) return label + "value cannot be empty.";
                     try { Pattern.compile(val); }
                     catch (PatternSyntaxException e) { return label + "invalid regex pattern: " + e.getDescription(); }
                 }
-                case GREATER_THAN, LESS_THAN -> {
+                case INPUT_GREATER_THAN, INPUT_LESS_THAN -> {
                     if (val.isEmpty()) return label + "value cannot be empty.";
                     try { Double.parseDouble(val); }
                     catch (NumberFormatException e) { return label + "value must be a number (e.g. 42 or 3.14)."; }
                 }
-                case BETWEEN -> {
+                case INPUT_BETWEEN -> {
                     String[] parts = val.split(",", 2);
                     if (parts.length != 2) return label + "value must be 'min,max' (e.g. 10,50).";
                     try {
@@ -609,17 +586,31 @@ public class EventEditorDialog extends BaseDialog {
                         if (min > max) return label + "min must be less than or equal to max.";
                     } catch (NumberFormatException e) { return label + "both min and max must be numbers (e.g. 10,50)."; }
                 }
-                case LENGTH_EQUALS -> {
+                case INPUT_LENGTH_EQUALS -> {
                     if (val.isEmpty()) return label + "value cannot be empty.";
                     try {
                         int len = Integer.parseInt(val);
                         if (len < 0) return label + "length cannot be negative.";
                     } catch (NumberFormatException e) { return label + "value must be a whole number (e.g. 5)."; }
                 }
-                case IS_NUMERIC -> {} // no value required
-                case STATE_IS_EMPTY -> {} // value is an optional state name; blank = default state
+                case INPUT_IS_NUMERIC -> {} // no value required
+                case STATE_IS_EMPTY, STATE_IS_NUMERIC -> {} // value is an optional state name; blank = default state
                 case STATE_EQUALS, STATE_NOT_EQUALS -> {
                     if (val.isEmpty()) return label + "value cannot be empty.";
+                }
+                case STATE_LESS_THAN, STATE_GREATER_THAN -> {
+                    if (val.isEmpty()) return label + "threshold cannot be empty.";
+                    try { Double.parseDouble(val); }
+                    catch (NumberFormatException e) { return label + "threshold must be a number (e.g. 42 or 3.14)."; }
+                }
+                case STATE_BETWEEN -> {
+                    String[] parts = val.split(",", 2);
+                    if (parts.length != 2) return label + "value must be 'min,max' (e.g. 10,50).";
+                    try {
+                        double min = Double.parseDouble(parts[0].trim());
+                        double max = Double.parseDouble(parts[1].trim());
+                        if (min > max) return label + "min must be less than or equal to max.";
+                    } catch (NumberFormatException e) { return label + "both min and max must be numbers (e.g. 10,50)."; }
                 }
                 case DEVICE_EQUALS, DEVICE_NOT_EQUALS -> {
                     if (deviceNames.length == 0) return label + "no devices configured.";
@@ -627,6 +618,20 @@ public class EventEditorDialog extends BaseDialog {
                     boolean anySelected = false;
                     for (ImBoolean b : sel) { if (b.get()) { anySelected = true; break; } }
                     if (!anySelected) return label + "select at least one device.";
+                }
+                case WEBSOCKET_HAS_PARAM -> {
+                    String paramName = fieldConditions.get(i)[0].get().trim();
+                    if (paramName.isEmpty()) return label + "parameter name cannot be empty.";
+                }
+                case WEBSOCKET_PARAM_EQUALS, WEBSOCKET_PARAM_NOT_EQUALS, WEBSOCKET_PARAM_CONTAINS,
+                     WEBSOCKET_PARAM_STARTS_WITH, WEBSOCKET_PARAM_ENDS_WITH -> {
+                    String paramName = fieldConditions.get(i)[0].get().trim();
+                    if (paramName.isEmpty()) return label + "parameter name cannot be empty.";
+                    if (val.isEmpty()) return label + "parameter value cannot be empty.";
+                }
+                case WEBSOCKET_CHANNEL_EQUALS, WEBSOCKET_CHANNEL_NOT_EQUALS,
+                     WEBSOCKET_CHANNEL_STARTS_WITH, WEBSOCKET_CHANNEL_CONTAINS -> {
+                    if (val.isEmpty()) return label + "channel path cannot be empty.";
                 }
             }
         }
@@ -647,10 +652,22 @@ public class EventEditorDialog extends BaseDialog {
                     if (sel[j].get()) { if (!sb.isEmpty()) sb.append(","); sb.append(deviceNames[j]); }
                 }
                 value = sb.toString();
-            } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS) {
+            } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS
+                    || condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN
+                    || condType == ConditionType.STATE_BETWEEN) {
                 String name = fieldConditions.get(i)[0].get().trim();
                 String stateVal = fieldConditions.get(i)[1].get().trim();
                 value = name.isEmpty() ? stateVal : name + "|" + stateVal;
+            } else if (condType == ConditionType.WEBSOCKET_HAS_PARAM) {
+                value = fieldConditions.get(i)[0].get().trim();
+            } else if (condType == ConditionType.WEBSOCKET_PARAM_EQUALS
+                    || condType == ConditionType.WEBSOCKET_PARAM_NOT_EQUALS
+                    || condType == ConditionType.WEBSOCKET_PARAM_CONTAINS
+                    || condType == ConditionType.WEBSOCKET_PARAM_STARTS_WITH
+                    || condType == ConditionType.WEBSOCKET_PARAM_ENDS_WITH) {
+                String paramName = fieldConditions.get(i)[0].get().trim();
+                String paramVal  = fieldConditions.get(i)[1].get().trim();
+                value = paramName + "|" + paramVal;
             } else {
                 value = fieldConditions.get(i)[1].get().trim();
             }
@@ -689,8 +706,14 @@ public class EventEditorDialog extends BaseDialog {
                     String stateVal = fieldActionValues.get(i).get().trim();
                     yield stateName.isEmpty() ? stateVal : stateName + "|" + stateVal;
                 }
+                case SEND_WEBSOCKET -> {
+                    String wsChannel = fieldActionValues.get(i).get().trim();
+                    String wsMessage = fieldActionSecondaryValues.get(i).get().trim();
+                    yield wsChannel.isEmpty() ? wsMessage : wsChannel + "|" + wsMessage;
+                }
                 case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                     PLAY_SOUND, CLEAR_STATE -> fieldActionValues.get(i).get().trim();
+                     PLAY_SOUND, CLEAR_STATE,
+                     RUN_COMMAND -> fieldActionValues.get(i).get().trim();
             };
             boolean allowEmptyValue = actionType == ActionType.PLAY_SOUND || actionType == ActionType.CLEAR_STATE;
             if (allowEmptyValue || (value != null && !value.isBlank())) {
@@ -699,6 +722,25 @@ public class EventEditorDialog extends BaseDialog {
             // Note: value may be null only for CALL_WEBHOOK / OPEN_PROGRAM when no entries exist.
         }
         return actions;
+    }
+
+    private static ImBoolean[] initTriggerSourceDefaults() {
+        TriggerSource[] all = TriggerSource.values();
+        ImBoolean[] result = new ImBoolean[all.length];
+        for (int i = 0; i < all.length; i++) {
+            result[i] = new ImBoolean(i == 0); // SERIAL checked, rest unchecked
+        }
+        return result;
+    }
+
+    private List<String> buildTriggerSources() {
+        TriggerSource[] all = TriggerSource.values();
+        List<String> result = new ArrayList<>();
+        for (int i = 0; i < all.length; i++) {
+            if (fieldTriggerSources[i].get()) result.add(all[i].name());
+        }
+        if (result.isEmpty()) result.add(TriggerSource.SERIAL.name());
+        return result;
     }
 
     private void save() {
@@ -726,12 +768,13 @@ public class EventEditorDialog extends BaseDialog {
             editing.setName(name);
             editing.setConditions(conditions);
             editing.setActions(actions);
+            editing.setTriggerSources(buildTriggerSources());
         } else {
             if (events.stream().anyMatch(e -> e.getName().equalsIgnoreCase(name))) {
                 BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::requestOpen));
                 return;
             }
-            events.add(new DataStore.Event(name, conditions, actions));
+            events.add(new DataStore.Event(name, conditions, actions, buildTriggerSources()));
         }
 
         storage.save();

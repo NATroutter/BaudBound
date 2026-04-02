@@ -19,11 +19,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
@@ -69,12 +76,36 @@ public class EventHandler {
     /** Cache of the condition-first sorted event list. Invalidated via {@link #invalidateSortCache()}. */
     private volatile List<DataStore.Event> sortedEventsCache = null;
 
+    /** Tracks all currently playing {@link Clip} instances for bulk stop support. */
+    private final Set<Clip> activeClips = Collections.newSetFromMap(new ConcurrentHashMap<>());
+
     /**
      * Returns an unmodifiable snapshot of the current state map for display purposes.
      * Keys are state names; values are the current state values.
      */
     public Map<String, String> getStates() {
         return Map.copyOf(states);
+    }
+
+    /**
+     * Sets the named state to the given value. Safe to call from any thread.
+     *
+     * @param name  the state name; must not be blank
+     * @param value the value to assign
+     */
+    public void setState(String name, String value) {
+        states.put(name, value);
+    }
+
+    /**
+     * Stops and closes all currently playing sound clips.
+     * Safe to call from any thread.
+     */
+    public void stopAllSounds() {
+        for (Clip clip : activeClips) {
+            clip.stop();
+        }
+        logger.info("Stopped all playing sounds");
     }
 
     /**
@@ -101,15 +132,26 @@ public class EventHandler {
     }
 
     /**
-     * Evaluates all configured events against {@code input} and fires matching actions.
+     * Convenience overload for serial input — wraps the call in a {@link TriggerContext}.
+     *
+     * @param input  the trimmed line read from the serial port
+     * @param device the device that produced this input
+     */
+    public void process(String input, DataStore.Device device) {
+        process(TriggerContext.serial(input, device));
+    }
+
+    /**
+     * Evaluates all configured events against the trigger context and fires matching actions.
+     * Events are filtered by their configured trigger sources before condition matching.
      * Respects the {@code runFirstOnly}, {@code conditionEventsFirst}, and
      * {@code skipEmptyConditions} settings from {@link DataStore.Settings.Event}.
      *
-     * @param input  the trimmed line read from the serial port
-     * @param device the device that produced this input,
-     *               used to evaluate {@link ConditionType#DEVICE_EQUALS} conditions
+     * @param context the trigger context carrying the input payload, source, and optional device
      */
-    public void process(String input, DataStore.Device device) {
+    public void process(TriggerContext context) {
+        String input  = context.input();
+        DataStore.Device device = context.device();
 
         DataStore data = storage.getData();
         DataStore.Settings.Event eventSettings = data.getSettings().getEvent();
@@ -133,32 +175,41 @@ public class EventHandler {
         List<String> firedNames = new java.util.ArrayList<>();
 
         for (DataStore.Event event : events) {
+            boolean allowed = event.getEffectiveTriggerSources().stream()
+                    .anyMatch(s -> context.source().name().equalsIgnoreCase(s));
+            if (!allowed) continue;
+
             boolean hasConditions = event.getConditions() != null && !event.getConditions().isEmpty();
             if (skipEmpty && !hasConditions) continue;
 
-            if (matchesConditions(event, input, device)) {
-                fireAction(event, input);
+            if (matchesConditions(event, context)) {
+                fireAction(event, context);
                 firedNames.add(event.getName());
                 if (runFirstOnly) break;
             }
         }
 
-        String deviceTag = device != null ? " (device: " + device.getName() + ")" : "";
+        String tag = "[" + context.source().name() + "]"
+                + (device != null ? " (device: " + device.getName() + ")" : "");
         if (firedNames.isEmpty()) {
             if (!events.isEmpty()) {
-                logger.warn("No events matched input: \"" + input + "\"" + deviceTag);
+                logger.warn(tag + " No events matched input: \"" + input + "\"");
             }
         } else {
-            logger.info("Input: \"" + input + "\"" + deviceTag +
-                    " — fired " + firedNames.size() + " event(s): " + String.join(", ", firedNames));
+            logger.info(tag + " Input: \"" + input + "\" — fired " + firedNames.size()
+                    + " event(s): " + String.join(", ", firedNames));
         }
     }
 
     /**
-     * Returns {@code true} if every condition in the event is satisfied by {@code input}.
+     * Returns {@code true} if every condition in the event is satisfied by the trigger context.
      * An event with no conditions always matches.
      */
-    private boolean matchesConditions(DataStore.Event event, String input, DataStore.Device device) {
+    private boolean matchesConditions(DataStore.Event event, TriggerContext context) {
+        String input  = context.input();
+        DataStore.Device device = context.device();
+        String channel = context.channel() != null ? context.channel() : "";
+
         List<DataStore.Event.Condition> conditions = event.getConditions();
         if (conditions == null || conditions.isEmpty()) return true;
 
@@ -166,25 +217,25 @@ public class EventHandler {
             ConditionType type = ConditionType.getByName(condition.getType());
             String value = condition.getValue();
             if (type == null) continue;
-            if (type != ConditionType.IS_NUMERIC && value == null) continue;
+            if (type != ConditionType.INPUT_IS_NUMERIC && type != ConditionType.STATE_IS_NUMERIC && value == null) continue;
 
             boolean caseSensitive = condition.isCaseSensitive();
             String  normalizedInput = caseSensitive ? input : input.toLowerCase();
             String  normalizedValue = caseSensitive ? value : value.toLowerCase();
 
             boolean matches = switch (type) {
-                case STARTS_WITH     -> normalizedInput.startsWith(normalizedValue);
-                case ENDS_WITH       -> normalizedInput.endsWith(normalizedValue);
-                case CONTAINS        -> normalizedInput.contains(normalizedValue);
-                case NOT_CONTAINS    -> !normalizedInput.contains(normalizedValue);
-                case NOT_STARTS_WITH -> !normalizedInput.startsWith(normalizedValue);
-                case EQUALS          -> normalizedInput.equals(normalizedValue);
-                case REGEX           -> patternCache.computeIfAbsent(value, Pattern::compile).matcher(input).matches();
-                case IS_NUMERIC      -> isNumeric(input);
-                case GREATER_THAN    -> compareNumeric(input, value) > 0;
-                case LESS_THAN       -> compareNumeric(input, value) < 0;
-                case BETWEEN         -> isBetween(input, value);
-                case LENGTH_EQUALS   -> parseLengthEquals(input, value);
+                case INPUT_STARTS_WITH -> normalizedInput.startsWith(normalizedValue);
+                case INPUT_ENDS_WITH -> normalizedInput.endsWith(normalizedValue);
+                case INPUT_CONTAINS -> normalizedInput.contains(normalizedValue);
+                case INPUT_NOT_CONTAINS -> !normalizedInput.contains(normalizedValue);
+                case INPUT_NOT_STARTS_WITH -> !normalizedInput.startsWith(normalizedValue);
+                case INPUT_EQUALS -> normalizedInput.equals(normalizedValue);
+                case INPUT_REGEX -> patternCache.computeIfAbsent(value, Pattern::compile).matcher(input).matches();
+                case INPUT_IS_NUMERIC -> isNumeric(input);
+                case INPUT_GREATER_THAN -> compareNumeric(input, value) > 0;
+                case INPUT_LESS_THAN -> compareNumeric(input, value) < 0;
+                case INPUT_BETWEEN -> isBetween(input, value);
+                case INPUT_LENGTH_EQUALS -> parseLengthEquals(input, value);
                 case STATE_EQUALS, STATE_NOT_EQUALS -> {
                     String[] p = value.split("\\|", 2);
                     boolean eq = p.length == 2
@@ -205,6 +256,62 @@ public class EventHandler {
                     }
                     yield type == ConditionType.DEVICE_EQUALS ? matched : !matched;
                 }
+                case WEBSOCKET_HAS_PARAM -> {
+                    Map<String, String> params = parseWsParams(input);
+                    yield params.containsKey(value.trim());
+                }
+                case WEBSOCKET_PARAM_EQUALS, WEBSOCKET_PARAM_NOT_EQUALS, WEBSOCKET_PARAM_CONTAINS,
+                     WEBSOCKET_PARAM_STARTS_WITH, WEBSOCKET_PARAM_ENDS_WITH -> {
+                    String[] p = value.split("\\|", 2);
+                    if (p.length < 2) yield false;
+                    Map<String, String> params = parseWsParams(input);
+                    String paramVal = params.get(p[0].trim());
+                    if (paramVal == null) yield false;
+                    String pv = caseSensitive ? paramVal : paramVal.toLowerCase();
+                    String cv = caseSensitive ? p[1] : p[1].toLowerCase();
+                    yield switch (type) {
+                        case WEBSOCKET_PARAM_EQUALS       -> pv.equals(cv);
+                        case WEBSOCKET_PARAM_NOT_EQUALS   -> !pv.equals(cv);
+                        case WEBSOCKET_PARAM_CONTAINS     -> pv.contains(cv);
+                        case WEBSOCKET_PARAM_STARTS_WITH  -> pv.startsWith(cv);
+                        case WEBSOCKET_PARAM_ENDS_WITH    -> pv.endsWith(cv);
+                        default -> false;
+                    };
+                }
+                case WEBSOCKET_CHANNEL_EQUALS -> {
+                    String nch = caseSensitive ? channel : channel.toLowerCase();
+                    yield nch.equals(normalizedValue);
+                }
+                case WEBSOCKET_CHANNEL_STARTS_WITH -> {
+                    String nch = caseSensitive ? channel : channel.toLowerCase();
+                    yield nch.startsWith(normalizedValue);
+                }
+                case WEBSOCKET_CHANNEL_CONTAINS -> {
+                    String nch = caseSensitive ? channel : channel.toLowerCase();
+                    yield nch.contains(normalizedValue);
+                }
+                case WEBSOCKET_CHANNEL_NOT_EQUALS -> {
+                    String nch = caseSensitive ? channel : channel.toLowerCase();
+                    yield !nch.equals(normalizedValue);
+                }
+                case STATE_IS_NUMERIC -> {
+                    String sname = (value == null || value.isBlank()) ? DEFAULT_STATE : value.trim();
+                    String sv = states.get(sname);
+                    yield sv != null && isNumeric(sv);
+                }
+                case STATE_LESS_THAN, STATE_GREATER_THAN, STATE_BETWEEN -> {
+                    String[] p = value.split("\\|", 2);
+                    String sname = p.length == 2 ? p[0].trim() : DEFAULT_STATE;
+                    String threshold = p.length == 2 ? p[1] : value;
+                    String sv = states.get(sname);
+                    if (sv == null || !isNumeric(sv)) yield false;
+                    yield switch (type) {
+                        case STATE_LESS_THAN    -> compareNumeric(sv, threshold) < 0;
+                        case STATE_GREATER_THAN -> compareNumeric(sv, threshold) > 0;
+                        case STATE_BETWEEN      -> isBetween(sv, threshold);
+                        default -> false;
+                    };
+                }
             };
 
             if (!matches) return false;
@@ -212,33 +319,32 @@ public class EventHandler {
         return true;
     }
 
-    /**
-     * Dispatches each action of the event on a separate virtual thread.
-     * Errors in individual actions are caught and logged without stopping other actions.
-     */
-    private void fireAction(DataStore.Event event, String input) {
+    private void fireAction(DataStore.Event event, TriggerContext context) {
         if (event.getActions() == null || event.getActions().isEmpty()) return;
+
+        String eventName = event.getName();
 
         for (DataStore.Event.Action action : event.getActions()) {
             ActionType type = ActionType.getByName(action.getType());
             if (type == null) continue;
             String value = action.getValue();
 
-            // State actions are executed synchronously so the new state is visible
-            // to the very next serial line processed on this thread.
             if (type == ActionType.SET_STATE) {
                 String[] p = value != null ? value.split("\\|", 2) : new String[]{""};
                 if (p.length == 2) {
-                    states.put(p[0].trim(), p[1]);
-                    logger.info("State \"" + p[0].trim() + "\" set to: \"" + p[1] + "\"");
+                    String resolved = resolve(p[1], context, eventName);
+                    states.put(p[0].trim(), resolved);
+                    logger.info("State \"" + p[0].trim() + "\" set to: \"" + resolved + "\"");
                 } else {
-                    states.put(DEFAULT_STATE, value != null ? value : "");
-                    logger.info("State \"" + DEFAULT_STATE + "\" set to: \"" + value + "\"");
+                    String resolved = resolve(value != null ? value : "", context, eventName);
+                    states.put(DEFAULT_STATE, resolved);
+                    logger.info("State \"" + DEFAULT_STATE + "\" set to: \"" + resolved + "\"");
                 }
                 continue;
             }
             if (type == ActionType.CLEAR_STATE) {
-                String name = (value != null && !value.isBlank()) ? value.trim() : DEFAULT_STATE;
+                String name = (value != null && !value.isBlank())
+                        ? resolve(value.trim(), context, eventName) : DEFAULT_STATE;
                 states.remove(name);
                 logger.info("State \"" + name + "\" cleared");
                 continue;
@@ -247,20 +353,22 @@ public class EventHandler {
             Thread.ofVirtual().start(() -> {
                 try {
                     switch (type) {
-                        case CALL_WEBHOOK      -> callWebhook(value, input);
-                        case OPEN_URL          -> openUrl(value, input);
-                        case OPEN_PROGRAM      -> openProgram(value, input);
-                        case TYPE_TEXT         -> typeText(value, input);
-                        case COPY_TO_CLIPBOARD -> copyToClipboard(value, input);
-                        case SHOW_NOTIFICATION -> showNotification(value, input);
-                        case WRITE_TO_FILE     -> writeToFile(value, input);
-                        case APPEND_TO_FILE    -> appendToFile(value, input);
+                        case CALL_WEBHOOK      -> callWebhook(value, context, eventName);
+                        case OPEN_URL          -> openUrl(value, context, eventName);
+                        case OPEN_PROGRAM      -> openProgram(value, context, eventName);
+                        case TYPE_TEXT         -> typeText(value, context, eventName);
+                        case COPY_TO_CLIPBOARD -> copyToClipboard(value, context, eventName);
+                        case SHOW_NOTIFICATION -> showNotification(value, context, eventName);
+                        case WRITE_TO_FILE     -> writeToFile(value, context, eventName);
+                        case APPEND_TO_FILE    -> appendToFile(value, context, eventName);
                         case PLAY_SOUND        -> playSound(value);
-                        case SEND_TO_DEVICE    -> sendToDevice(value, input);
+                        case SEND_TO_DEVICE    -> sendToDevice(value, context, eventName);
+                        case SEND_WEBSOCKET    -> sendWebSocket(value, context, eventName);
+                        case RUN_COMMAND       -> runCommand(value, context, eventName);
                         default                -> logger.error("Unhandled action type: " + type);
                     }
                 } catch (Exception e) {
-                    logger.error("Action [" + type + "] failed for event \"" + event.getName() + "\": " + e.getMessage());
+                    logger.error("Action [" + type + "] failed for event \"" + eventName + "\": " + e.getMessage());
                 }
             });
         }
@@ -270,14 +378,14 @@ public class EventHandler {
     // Actions
     // -------------------------------------------------------------------------
 
-    private void callWebhook(String webhookName, String input) {
+    private void callWebhook(String webhookName, TriggerContext context, String eventName) {
         if (webhookName == null) return;
 
         storage.getData().getActions().getWebhooks().stream()
                 .filter(w -> w.getName().equals(webhookName))
                 .findFirst()
                 .ifPresentOrElse(webhook -> {
-                    DataStore.Actions.Webhook resolved = resolveWebhook(webhook, input);
+                    DataStore.Actions.Webhook resolved = resolveWebhook(webhook, context, eventName);
                     HttpHandler.WebhookResult result = HttpHandler.fireWebhook(resolved);
                     if (result.success()) {
                         logger.info("Webhook \"" + webhookName + "\" responded " + result.statusCode());
@@ -288,14 +396,14 @@ public class EventHandler {
                 }, () -> logger.error("Webhook not found: " + webhookName));
     }
 
-    private void openUrl(String url, String input) throws IOException {
-        url = resolve(url, input);
+    private void openUrl(String url, TriggerContext context, String eventName) throws IOException {
+        url = resolve(url, context, eventName);
         if (url == null || url.isBlank()) return;
         FoxLib.openURL(url);
         logger.info("Opened URL: " + url);
     }
 
-    private void openProgram(String programName, String input) throws IOException {
+    private void openProgram(String programName, TriggerContext context, String eventName) throws IOException {
         if (programName == null) return;
 
         DataStore.Actions.Program program = storage.getData().getActions().getPrograms().stream()
@@ -307,11 +415,25 @@ public class EventHandler {
             return;
         }
 
-        String path = resolve(program.getPath(), input);
-        String args = resolve(program.getArguments(), input);
+        String path = resolve(program.getPath(), context, eventName);
+        String args = resolve(program.getArguments(), context, eventName);
+        launchProgram(path, args, program.isRunAsAdmin());
+        String adminTag = program.isRunAsAdmin() ? " [admin]" : "";
+        String argsTag  = (args != null && !args.isBlank()) ? " args=\"" + args + "\"" : "";
+        logger.info("Launched program: " + programName + argsTag + adminTag);
+    }
 
+    /**
+     * Launches an external program directly without going through event processing or storage lookup.
+     * Intended for ad-hoc use such as the "Test" button in the program editor.
+     *
+     * @param path       absolute path to the executable
+     * @param args       argument string, or {@code null}/blank for none
+     * @param runAsAdmin when {@code true}, launches via PowerShell {@code Start-Process … -Verb RunAs}
+     */
+    public void launchProgram(String path, String args, boolean runAsAdmin) throws IOException {
         ProcessBuilder pb;
-        if (program.isRunAsAdmin()) {
+        if (runAsAdmin) {
             pb = (args != null && !args.isBlank())
                     ? new ProcessBuilder("powershell", "-Command", "Start-Process", "\"" + path + "\"", "-ArgumentList", "\"" + args + "\"", "-Verb", "RunAs")
                     : new ProcessBuilder("powershell", "-Command", "Start-Process", "\"" + path + "\"", "-Verb", "RunAs");
@@ -321,11 +443,28 @@ public class EventHandler {
                     : new ProcessBuilder(path);
         }
         pb.start();
-        logger.info("Launched program: " + programName);
     }
 
-    private void typeText(String text, String input) throws AWTException {
-        text = resolve(text, input);
+    /**
+     * Executes {@code command} in the OS shell after resolving variable substitutions.
+     * Uses {@code cmd.exe /c} on Windows and {@code sh -c} on all other platforms.
+     */
+    private void runCommand(String command, TriggerContext context, String eventName) throws IOException {
+        command = resolve(command, context, eventName);
+        if (command == null || command.isBlank()) return;
+        ProcessBuilder pb = isWindows()
+                ? new ProcessBuilder("cmd.exe", "/c", command)
+                : new ProcessBuilder("sh", "-c", command);
+        pb.start();
+        logger.info("Ran command: " + command);
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private void typeText(String text, TriggerContext context, String eventName) throws AWTException {
+        text = resolve(text, context, eventName);
         if (text == null || text.isBlank()) return;
 
         StringSelection selection = new StringSelection(text);
@@ -341,8 +480,8 @@ public class EventHandler {
         logger.info("Typed text: " + text);
     }
 
-    private void copyToClipboard(String text, String input) {
-        text = resolve(text, input);
+    private void copyToClipboard(String text, TriggerContext context, String eventName) {
+        text = resolve(text, context, eventName);
         if (text == null || text.isBlank()) return;
         StringSelection selection = new StringSelection(text);
         Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
@@ -354,7 +493,7 @@ public class EventHandler {
      * TYPE is one of: INFO (default), WARNING, ERROR, NONE
      * Example: WARNING|Sensor value out of range: {input}
      */
-    private void showNotification(String value, String input) {
+    private void showNotification(String value, TriggerContext context, String eventName) {
         if (value == null || value.isBlank()) return;
         String[] parts = value.split("\\|", 2);
         TrayIcon.MessageType type = TrayIcon.MessageType.INFO;
@@ -362,9 +501,9 @@ public class EventHandler {
         if (parts.length == 2) {
             try { type = TrayIcon.MessageType.valueOf(parts[0].trim().toUpperCase()); }
             catch (IllegalArgumentException ignored) {}
-            message = resolve(parts[1], input);
+            message = resolve(parts[1], context, eventName);
         } else {
-            message = resolve(parts[0], input);
+            message = resolve(parts[0], context, eventName);
         }
         if (message == null || message.isBlank()) return;
         BaudBound.showNotification(BaudBound.APP_NAME, message, type);
@@ -374,30 +513,28 @@ public class EventHandler {
     /**
      * Value format: "path" or "path|content template"
      * If no content template is provided, defaults to "{timestamp}: {input}".
-     * Both path and content support {input} and {timestamp} substitution.
+     * Both path and content support all variable substitutions.
      * Overwrites the file on each call.
-     * Example: C:\logs\data.txt|{timestamp}: {input}
      */
-    private void writeToFile(String value, String input) throws IOException {
+    private void writeToFile(String value, TriggerContext context, String eventName) throws IOException {
         if (value == null || value.isBlank()) return;
         String[] parts = value.split("\\|", 2);
-        String filePath = resolve(parts[0].trim(), input);
+        String filePath = resolve(parts[0].trim(), context, eventName);
         String contentTemplate = parts.length == 2 ? parts[1] : "{timestamp}: {input}";
-        String content = resolve(contentTemplate, input) + System.lineSeparator();
+        String content = resolve(contentTemplate, context, eventName) + System.lineSeparator();
         Files.writeString(Path.of(filePath), content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         logger.info("Wrote to file: " + filePath);
     }
 
     /**
      * Same format as writeToFile but appends instead of overwriting.
-     * Example: C:\logs\data.txt|{timestamp}: {input}
      */
-    private void appendToFile(String value, String input) throws IOException {
+    private void appendToFile(String value, TriggerContext context, String eventName) throws IOException {
         if (value == null || value.isBlank()) return;
         String[] parts = value.split("\\|", 2);
-        String filePath = resolve(parts[0].trim(), input);
+        String filePath = resolve(parts[0].trim(), context, eventName);
         String contentTemplate = parts.length == 2 ? parts[1] : "{timestamp}: {input}";
-        String content = resolve(contentTemplate, input) + System.lineSeparator();
+        String content = resolve(contentTemplate, context, eventName) + System.lineSeparator();
         Files.writeString(Path.of(filePath), content, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         logger.info("Appended to file: " + filePath);
     }
@@ -416,16 +553,22 @@ public class EventHandler {
         AudioInputStream stream = AudioSystem.getAudioInputStream(file);
         Clip clip = AudioSystem.getClip();
         clip.open(stream);
-        clip.addLineListener(e -> { if (e.getType() == LineEvent.Type.STOP) clip.close(); });
+        activeClips.add(clip);
+        clip.addLineListener(e -> {
+            if (e.getType() == LineEvent.Type.STOP) {
+                activeClips.remove(clip);
+                clip.close();
+            }
+        });
         clip.start();
         logger.info("Playing sound: " + filePath);
     }
 
     /**
      * Value format: {@code "deviceName|data"}.
-     * Resolves {@code {input}} / {@code {timestamp}} in the data portion before sending.
+     * Resolves all variable tokens in the data portion before sending.
      */
-    private void sendToDevice(String value, String input) {
+    private void sendToDevice(String value, TriggerContext context, String eventName) {
         if (value == null || value.isBlank()) return;
         String[] parts = value.split("\\|", 2);
         if (parts.length < 2) {
@@ -433,7 +576,7 @@ public class EventHandler {
             return;
         }
         String deviceName = parts[0].trim();
-        String data = resolve(parts[1], input);
+        String data = resolve(parts[1], context, eventName);
         boolean sent = deviceConnectionManager.sendToDevice(deviceName, data);
         if (sent) {
             logger.info("Sent to device \"" + deviceName + "\": " + data);
@@ -442,9 +585,54 @@ public class EventHandler {
         }
     }
 
+    /**
+     * Sends a WebSocket message. Value format: {@code "targetChannel|message"} or just
+     * {@code "message"} to reply on the trigger's own channel.
+     */
+    private void sendWebSocket(String value, TriggerContext context, String eventName) {
+        if (value == null || value.isBlank()) {
+            logger.warn("Send WebSocket: message is empty — skipping.");
+            return;
+        }
+        String channel = context.channel() != null ? context.channel() : "";
+        String[] parts = value.split("\\|", 2);
+        if (parts.length == 2) {
+            String targetChannel = resolve(parts[0].trim(), context, eventName);
+            String message       = resolve(parts[1], context, eventName);
+            fi.natroutter.baudbound.websocket.WebSocketHandler handler = BaudBound.getWebSocketHandler();
+            if (handler == null || !handler.isRunning()) {
+                logger.warn("Send WebSocket: server is not running.");
+                return;
+            }
+            handler.sendToChannel(targetChannel, message);
+            logger.info("WebSocket sent to channel \"" + targetChannel + "\": \"" + message + "\"");
+        } else {
+            String message = resolve(value, context, eventName);
+            context.reply(message);
+            logger.info("WebSocket reply sent on channel \"" + (channel.isBlank() ? "/" : channel) + "\": \"" + message + "\"");
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Condition helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Parses a URL-style query string ({@code key=value&key2=value2}) into a map.
+     * Keys and values are trimmed. Parameters without {@code =} are stored with an empty value.
+     */
+    private Map<String, String> parseWsParams(String input) {
+        Map<String, String> params = new LinkedHashMap<>();
+        for (String part : input.split("&")) {
+            String[] kv = part.split("=", 2);
+            if (kv.length == 2) {
+                params.put(kv[0].trim(), kv[1].trim());
+            } else if (kv.length == 1 && !kv[0].isBlank()) {
+                params.put(kv[0].trim(), "");
+            }
+        }
+        return params;
+    }
 
     private boolean isNumeric(String input) {
         try { Double.parseDouble(input.trim()); return true; }
@@ -480,38 +668,170 @@ public class EventHandler {
     // -------------------------------------------------------------------------
 
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+    private static final DateTimeFormatter TIME_ONLY_FORMAT  = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     /**
-     * Substitutes {@code {input}} and {@code {timestamp}} placeholders in {@code template}.
+     * Resolves all supported variable tokens in {@code template} using the full trigger context.
+     * <p>Supported tokens:
+     * <ul>
+     *   <li><b>Input:</b> {@code {input}}, {@code {input.upper}}, {@code {input.lower}},
+     *       {@code {input.trim}}, {@code {input.length}}, {@code {input.word[N]}},
+     *       {@code {input.line[N]}}, {@code {input.replace[old|new]}}, {@code {input.urlencoded}}</li>
+     *   <li><b>Date/time:</b> {@code {timestamp}}, {@code {timestamp.unix}}, {@code {date}},
+     *       {@code {time}}, {@code {year}}, {@code {month}}, {@code {day}},
+     *       {@code {hour}}, {@code {minute}}, {@code {second}}</li>
+     *   <li><b>Trigger:</b> {@code {source}}, {@code {channel}}, {@code {event}}</li>
+     *   <li><b>Device:</b> {@code {device}}, {@code {device.port}}, {@code {device.baud}}</li>
+     *   <li><b>States:</b> {@code {state}}, {@code {state[name]}}</li>
+     *   <li><b>System:</b> {@code {hostname}}, {@code {username}}, {@code {env[VAR]}},
+     *       {@code {uuid}}, {@code {random[min,max]}}</li>
+     * </ul>
      *
-     * @param template the template string; may be {@code null}
-     * @param input    the raw serial input line
+     * @param template  the template string; may be {@code null}
+     * @param context   the trigger context carrying input, device, source, and channel
+     * @param eventName the name of the event that fired
      * @return the resolved string, or {@code null} if {@code template} is {@code null}
      */
-    private String resolve(String template, String input) {
+    private String resolve(String template, TriggerContext context, String eventName) {
         if (template == null) return null;
-        String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMAT);
-        return template
-                .replace("{input}", input)
-                .replace("{timestamp}", timestamp);
+        String input   = context.input();
+        String channel = context.channel() != null ? context.channel() : "";
+        DataStore.Device device = context.device();
+
+        String result = template;
+
+        // ---- Date / time (computed once) ----
+        LocalDateTime now       = LocalDateTime.now();
+        long          unixSecs  = Instant.now().getEpochSecond();
+        result = result
+                .replace("{timestamp}",      now.format(TIMESTAMP_FORMAT))
+                .replace("{timestamp.unix}", String.valueOf(unixSecs))
+                .replace("{date}",           now.toLocalDate().toString())
+                .replace("{time}",           now.toLocalTime().format(TIME_ONLY_FORMAT))
+                .replace("{year}",           String.format("%04d", now.getYear()))
+                .replace("{month}",          String.format("%02d", now.getMonthValue()))
+                .replace("{day}",            String.format("%02d", now.getDayOfMonth()))
+                .replace("{hour}",           String.format("%02d", now.getHour()))
+                .replace("{minute}",         String.format("%02d", now.getMinute()))
+                .replace("{second}",         String.format("%02d", now.getSecond()));
+
+        // ---- Input transforms (specific first, {input} last to avoid partial matches) ----
+        result = result
+                .replace("{input.upper}",      input.toUpperCase())
+                .replace("{input.lower}",      input.toLowerCase())
+                .replace("{input.trim}",       input.trim())
+                .replace("{input.length}",     String.valueOf(input.length()))
+                .replace("{input.urlencoded}", URLEncoder.encode(input, StandardCharsets.UTF_8));
+        result = replaceIndexedToken(result, "input\\.word", input.trim().split("\\s+", -1));
+        result = replaceIndexedToken(result, "input\\.line", input.split("\n", -1));
+        result = replaceInputReplace(result, input);
+        result = result.replace("{input}", input);
+
+        // ---- Trigger / event ----
+        result = result
+                .replace("{source}",  context.source().name())
+                .replace("{channel}", channel)
+                .replace("{event}",   eventName != null ? eventName : "");
+
+        // ---- Device (empty string when no device context) ----
+        String devName = device != null && device.getName() != null ? device.getName() : "";
+        String devPort = device != null && device.getPort() != null ? device.getPort() : "";
+        String devBaud = device != null ? String.valueOf(device.getBaudRate()) : "";
+        result = result
+                .replace("{device}",      devName)
+                .replace("{device.port}", devPort)
+                .replace("{device.baud}", devBaud);
+
+        // ---- States ----
+        result = result.replace("{state}", states.getOrDefault(DEFAULT_STATE, ""));
+        result = replaceStateToken(result);
+
+        // ---- System ----
+        result = result
+                .replace("{hostname}", getHostname())
+                .replace("{username}", System.getProperty("user.name", ""))
+                .replace("{uuid}",     UUID.randomUUID().toString());
+        result = replaceEnvToken(result);
+        result = replaceRandomToken(result);
+
+        return result;
     }
 
-    private DataStore.Actions.Webhook resolveWebhook(DataStore.Actions.Webhook original, String input) {
+    /** Replaces {@code {prefix[N]}} tokens using a pre-split array (0-indexed, out-of-range = empty). */
+    private static String replaceIndexedToken(String text, String tokenPattern, String[] parts) {
+        return Pattern.compile("\\{" + tokenPattern + "\\[(\\d+)\\]\\}")
+                .matcher(text)
+                .replaceAll(m -> {
+                    int idx = Integer.parseInt(m.group(1));
+                    return (idx >= 0 && idx < parts.length)
+                            ? Matcher.quoteReplacement(parts[idx]) : "";
+                });
+    }
+
+    /** Replaces {@code {input.replace[old|new]}} tokens. */
+    private static String replaceInputReplace(String text, String input) {
+        return Pattern.compile("\\{input\\.replace\\[([^|\\]]*?)\\|([^\\]]*?)\\]\\}")
+                .matcher(text)
+                .replaceAll(m -> Matcher.quoteReplacement(
+                        input.replace(m.group(1), m.group(2))));
+    }
+
+    /** Replaces {@code {state[name]}} tokens with their current state values. */
+    private String replaceStateToken(String text) {
+        return Pattern.compile("\\{state\\[([^\\]]+)\\]\\}")
+                .matcher(text)
+                .replaceAll(m -> Matcher.quoteReplacement(
+                        states.getOrDefault(m.group(1).trim(), "")));
+    }
+
+    /** Replaces {@code {env[VAR]}} tokens with OS environment variable values. */
+    private static String replaceEnvToken(String text) {
+        return Pattern.compile("\\{env\\[([^\\]]+)\\]\\}")
+                .matcher(text)
+                .replaceAll(m -> {
+                    String val = System.getenv(m.group(1).trim());
+                    return Matcher.quoteReplacement(val != null ? val : "");
+                });
+    }
+
+    /** Replaces {@code {random[min,max]}} tokens with a random integer in the inclusive range. */
+    private static String replaceRandomToken(String text) {
+        return Pattern.compile("\\{random\\[(\\d+),(\\d+)\\]\\}")
+                .matcher(text)
+                .replaceAll(m -> {
+                    int min = Integer.parseInt(m.group(1));
+                    int max = Integer.parseInt(m.group(2));
+                    if (min > max) return m.group(0);
+                    return String.valueOf(ThreadLocalRandom.current().nextInt(min, max + 1));
+                });
+    }
+
+    private static String getHostname() {
+        try { return java.net.InetAddress.getLocalHost().getHostName(); }
+        catch (Exception e) { return ""; }
+    }
+
+    private DataStore.Actions.Webhook resolveWebhook(DataStore.Actions.Webhook original, TriggerContext context, String eventName) {
+        String input = context.input();
         String resolvedInput = original.isUrlEscape()
                 ? URLEncoder.encode(input, StandardCharsets.UTF_8)
                 : input;
 
+        TriggerContext resolveCtx = original.isUrlEscape()
+                ? new TriggerContext(resolvedInput, context.device(), context.source(), context.channel(), context.connection())
+                : context;
+
         List<DataStore.Actions.Webhook.Header> resolvedHeaders = original.getHeaders() == null ? List.of() :
                 original.getHeaders().stream()
-                        .map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), resolve(h.getValue(), resolvedInput)))
+                        .map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), resolve(h.getValue(), resolveCtx, eventName)))
                         .toList();
 
         return new DataStore.Actions.Webhook(
                 original.getName(),
-                resolve(original.getUrl(), resolvedInput),
+                resolve(original.getUrl(), resolveCtx, eventName),
                 original.getMethod(),
                 resolvedHeaders,
-                resolve(original.getBody(), resolvedInput),
+                resolve(original.getBody(), resolveCtx, eventName),
                 original.isUrlEscape()
         );
     }

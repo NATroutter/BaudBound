@@ -22,7 +22,7 @@ import javax.swing.*;
  * Modal settings dialog covering General and Event configuration sections,
  * plus the Utilities shortcut-creator.
  * <p>
- * Device configuration has moved to the Devices dialog ({@code DevicesDialog}).
+ * Device configuration has moved to the Devices window ({@code DevicesWindow}).
  * <p>
  * ImGui state fields (prefixed {@code option}) shadow the persisted settings and are
  * populated by {@link #load()} when the dialog opens. {@link #save()} writes them back

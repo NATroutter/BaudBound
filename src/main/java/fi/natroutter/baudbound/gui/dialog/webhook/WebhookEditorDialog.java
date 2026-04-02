@@ -30,7 +30,7 @@ import java.util.List;
  * <p>
  * The "Test Webhook" button fires the request on a virtual thread so the UI stays
  * responsive; the {@code testing} flag disables the button while the request is in flight.
- * When dismissed via the X button, {@link #onClose()} reopens {@link WebhooksDialog}.
+ * When dismissed via the X button, {@link #onClose()} reopens {@link fi.natroutter.baudbound.gui.windows.WebhooksWindow}.
  */
 public class WebhookEditorDialog extends BaseDialog {
 
@@ -90,7 +90,7 @@ public class WebhookEditorDialog extends BaseDialog {
 
     @Override
     protected void onClose() {
-        BaudBound.getWebhooksDialog().show();
+        BaudBound.getWebhooksWindow().show();
     }
 
     @Override
@@ -98,18 +98,7 @@ public class WebhookEditorDialog extends BaseDialog {
         String title = mode.getType() + " Webhook";
         if (beginModal(title)) {
 
-            if (ImGui.beginChild("##instructions_wrap", ImGui.getContentRegionAvailX(), 0, ImGuiChildFlags.AutoResizeY)) {
-                if (ImGui.collapsingHeader("Instructions")) {
-                    ImGui.indent(8);
-                    ImGui.spacing();
-                    GuiHelper.instructions("fields (URL, Headers(Value), Body)");
-                    ImGui.spacing();
-                    ImGui.unindent(8);
-                    ImGui.spacing();
-                }
-            }
-            ImGui.endChild();
-            ImGui.spacing();
+
 
             ImGui.text("Name");
             ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
@@ -237,6 +226,6 @@ public class WebhookEditorDialog extends BaseDialog {
 
         storage.save();
         ImGui.closeCurrentPopup();
-        BaudBound.getMessageDialog().show("Saved", "Webhook \"" + name + "\" saved successfully.", new DialogButton("OK", () -> BaudBound.getWebhooksDialog().show()));
+        BaudBound.getMessageDialog().show("Saved", "Webhook \"" + name + "\" saved successfully.", new DialogButton("OK", () -> BaudBound.getWebhooksWindow().show()));
     }
 }

@@ -2,14 +2,19 @@ package fi.natroutter.baudbound;
 
 
 import fi.natroutter.baudbound.gui.dialog.device.DeviceEditorDialog;
-import fi.natroutter.baudbound.gui.dialog.device.DevicesDialog;
 import fi.natroutter.baudbound.gui.dialog.program.ProgramEditorDialog;
-import fi.natroutter.baudbound.gui.dialog.program.ProgramsDialog;
 import fi.natroutter.baudbound.event.EventHandler;
 import fi.natroutter.foxlib.FoxLib;
 import fi.natroutter.foxlib.logger.FoxLogger;
-import fi.natroutter.baudbound.gui.dialog.LogsDialog;
-import fi.natroutter.baudbound.gui.dialog.SimulateDialog;
+import fi.natroutter.baudbound.gui.windows.LogsWindow;
+import fi.natroutter.baudbound.gui.windows.SimulateWindow;
+import fi.natroutter.baudbound.gui.windows.WebSocketWindow;
+import fi.natroutter.baudbound.gui.windows.DocumentationWindow;
+import fi.natroutter.baudbound.gui.windows.StatesWindow;
+import fi.natroutter.baudbound.gui.windows.DevicesWindow;
+import fi.natroutter.baudbound.gui.windows.ProgramsWindow;
+import fi.natroutter.baudbound.gui.windows.WebhooksWindow;
+import fi.natroutter.baudbound.websocket.WebSocketHandler;
 import fi.natroutter.foxlib.logger.types.LogLevel;
 import fi.natroutter.baudbound.gui.DebugOverlay;
 import fi.natroutter.baudbound.gui.MainWindow;
@@ -17,11 +22,10 @@ import fi.natroutter.baudbound.gui.dialog.AboutDialog;
 import fi.natroutter.baudbound.gui.dialog.EventEditorDialog;
 import fi.natroutter.baudbound.gui.dialog.MessageDialog;
 import fi.natroutter.baudbound.gui.dialog.SettingsDialog;
-import fi.natroutter.baudbound.gui.dialog.StatesDialog;
 import fi.natroutter.baudbound.gui.dialog.UpdateDialog;
+import fi.natroutter.baudbound.gui.windows.EventsWindow;
 import fi.natroutter.baudbound.system.UpdateManager;
 import fi.natroutter.baudbound.gui.dialog.webhook.WebhookEditorDialog;
-import fi.natroutter.baudbound.gui.dialog.webhook.WebhooksDialog;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
 import fi.natroutter.baudbound.serial.DeviceConnectionManager;
 import fi.natroutter.baudbound.storage.DataStore;
@@ -49,6 +53,7 @@ import imgui.app.Configuration;
 import imgui.flag.ImGuiConfigFlags;
 import fi.natroutter.baudbound.system.AppArgs;
 import lombok.Getter;
+import lombok.Setter;
 import org.lwjgl.glfw.GLFW;
 import picocli.CommandLine;
 
@@ -114,17 +119,26 @@ public class BaudBound extends Application {
     @Getter private static MessageDialog messageDialog;
     @Getter private static AboutDialog aboutDialog;
     @Getter private static SettingsDialog settingsDialog;
-    @Getter private static DevicesDialog devicesDialog;
+    @Getter private static DevicesWindow devicesWindow;
     @Getter private static DeviceEditorDialog deviceEditorDialog;
-    @Getter private static WebhooksDialog webhooksDialog;
+    @Getter private static WebhooksWindow webhooksWindow;
     @Getter private static WebhookEditorDialog webhookEditorDialog;
-    @Getter private static ProgramsDialog programsDialog;
+    @Getter private static ProgramsWindow programsWindow;
     @Getter private static ProgramEditorDialog programEditorDialog;
     @Getter private static EventEditorDialog eventEditorDialog;
-    @Getter private static StatesDialog statesDialog;
+    @Getter private static StatesWindow statesWindow;
     @Getter private static UpdateDialog updateDialog;
-    @Getter private static LogsDialog logsDialog;
-    @Getter private static SimulateDialog simulateDialog;
+    @Getter private static LogsWindow logsWindow;
+    @Getter private static SimulateWindow simulateWindow;
+    @Getter private static WebSocketWindow webSocketWindow;
+    @Getter private static DocumentationWindow documentationWindow;
+    /**
+     * -- SETTER --
+     * Allows the WebSocket dialog to swap the handler instance when settings change.
+     */
+    @Setter
+    @Getter private static WebSocketHandler webSocketHandler;
+    @Getter private static EventsWindow eventsWindow;
 
     private static MainWindow mainWindow;
     private static DebugOverlay debugOverlay;
@@ -172,6 +186,10 @@ public class BaudBound extends Application {
         storageProvider = new StorageProvider();
         eventHandler = new EventHandler();
         deviceConnectionManager = new DeviceConnectionManager();
+
+        DataStore.Settings.WebSocket wsCfg = storageProvider.getData().getSettings().getWebSocket();
+        webSocketHandler = new WebSocketHandler(wsCfg.getEffectiveHost(), wsCfg.getEffectivePort(), wsCfg.getAuthToken());
+        if (wsCfg.isEnabled()) webSocketHandler.startServer();
         deviceConnectionManager.autoConnectAll(storageProvider.getData().getDevices());
 
         StatusRegistry statusRegistry = new StatusRegistry();
@@ -217,19 +235,23 @@ public class BaudBound extends Application {
         }
 
         settingsDialog = new SettingsDialog();
-        devicesDialog = new DevicesDialog();
+        devicesWindow = new DevicesWindow();
         deviceEditorDialog = new DeviceEditorDialog();
-        webhooksDialog = new WebhooksDialog();
+        webhooksWindow = new WebhooksWindow();
         webhookEditorDialog = new WebhookEditorDialog();
-        programsDialog = new ProgramsDialog();
+        programsWindow = new ProgramsWindow();
         programEditorDialog = new ProgramEditorDialog();
         messageDialog = new MessageDialog();
         aboutDialog = new AboutDialog();
         eventEditorDialog = new EventEditorDialog();
-        statesDialog = new StatesDialog();
+        statesWindow = new StatesWindow();
         updateDialog = new UpdateDialog();
-        logsDialog = new LogsDialog();
-        simulateDialog = new SimulateDialog();
+        logsWindow = new LogsWindow();
+        simulateWindow = new SimulateWindow();
+        webSocketWindow = new WebSocketWindow();
+        documentationWindow = new DocumentationWindow();
+        eventsWindow = new EventsWindow();
+        eventsWindow.show(); // open by default on first launch
         mainWindow = new MainWindow();
         debugOverlay = new DebugOverlay();
 
@@ -339,22 +361,30 @@ public class BaudBound extends Application {
 
         if (!guiVisible) return;
 
+        ImGui.dockSpaceOverViewport(imgui.flag.ImGuiDockNodeFlags.PassthruCentralNode, ImGui.getMainViewport());
+
         mainWindow.render();
+
+        // Floating panel windows
+        eventsWindow.render();
+        devicesWindow.render();
+        webhooksWindow.render();
+        programsWindow.render();
+        statesWindow.render();
+        logsWindow.render();
+        simulateWindow.render();
+        webSocketWindow.render();
+
+        // Modal dialogs (always rendered so pending open flags are consumed)
         messageDialog.render();
         aboutDialog.render();
         settingsDialog.render();
-        devicesDialog.render();
         deviceEditorDialog.render();
-        webhooksDialog.render();
         webhookEditorDialog.render();
         eventEditorDialog.render();
-        programsDialog.render();
         programEditorDialog.render();
-        statesDialog.render();
         updateDialog.render();
-        logsDialog.render();
-        simulateDialog.render();
-
+        documentationWindow.render();
         debugOverlay.render();
     }
 
@@ -400,8 +430,9 @@ public class BaudBound extends Application {
         super.initImGui(config);
 
         final ImGuiIO io = ImGui.getIO();
-        io.setIniFilename(null);
+        io.setIniFilename(new java.io.File(StorageProvider.getConfigDir(), "layout.ini").getAbsolutePath());
         io.addConfigFlags(ImGuiConfigFlags.NavEnableKeyboard);
+        io.addConfigFlags(ImGuiConfigFlags.DockingEnable);
         GuiTheme.applyDarkRuda();
 
         // Match the OpenGL clear color to the dark theme WindowBg so no white
@@ -422,6 +453,7 @@ public class BaudBound extends Application {
 
     @Override
     public void dispose() {
+        if (webSocketHandler != null) webSocketHandler.stopServer();
         logger.info("Saving storage...");
         storageProvider.save();
         deviceConnectionManager.disconnectAll();

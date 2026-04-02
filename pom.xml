@@ -40,7 +40,7 @@
 		<maven.compiler.target>21</maven.compiler.target>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<mainClass>${groupId}.BaudBound</mainClass>
-		<maven.build.timestamp.format>M-d-yyyy</maven.build.timestamp.format>
+		<maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss</maven.build.timestamp.format>
 		<lwjgl.version>3.3.6</lwjgl.version>
 	</properties>
 
@@ -176,6 +176,11 @@
 			<groupId>info.picocli</groupId>
 			<artifactId>picocli</artifactId>
 			<version>4.7.6</version>
+		</dependency>
+		<dependency>
+			<groupId>org.java-websocket</groupId>
+			<artifactId>Java-WebSocket</artifactId>
+			<version>1.5.6</version>
 		</dependency>
 
 

@@ -1,46 +1,43 @@
-package fi.natroutter.baudbound.gui.dialog.program;
+package fi.natroutter.baudbound.gui.windows;
 
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.DialogMode;
-import fi.natroutter.baudbound.gui.dialog.BaseDialog;
+import fi.natroutter.baudbound.gui.BaseWindow;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
+import imgui.flag.ImGuiCond;
 import imgui.type.ImInt;
 
 import java.util.List;
 
-
 /**
- * Modal list dialog for managing saved program definitions.
+ * Floating panel window for managing saved program definitions.
  * <p>
  * Displays all programs in a scrollable list with Create / Edit / Duplicate / Delete buttons.
- * Create and Edit close this dialog first and open {@link ProgramEditorDialog} instead;
- * {@code ProgramEditorDialog} reopens this dialog via {@code onClose()}.
+ * Create and Edit open {@link fi.natroutter.baudbound.gui.dialog.program.ProgramEditorDialog};
+ * {@code ProgramEditorDialog} reopens this window via its {@code onClose()} override.
  */
-public class ProgramsDialog extends BaseDialog {
+public class ProgramsWindow extends BaseWindow {
 
     private final StorageProvider storage = BaudBound.getStorageProvider();
-
     private final ImInt selected = new ImInt(0);
     private final List<DataStore.Actions.Program> items = storage.getData().getActions().getPrograms();
 
     @Override
     public void render() {
-        float fixedH = ImGui.getIO().getDisplaySizeY() * 0.5f;
-        if (beginModal("Programs", fixedH)) {
+        if (!open.get()) return;
+
+        ImGui.setNextWindowSize(520, 380, ImGuiCond.FirstUseEver);
+        ImGui.setNextWindowSizeConstraints(300, 200, Float.MAX_VALUE, Float.MAX_VALUE);
+
+        if (ImGui.begin("Programs##programswindow", open)) {
 
             GuiHelper.listAndEditorButtons(
                     "##Programs", items, selected, true,
-                    () -> {
-                        ImGui.closeCurrentPopup();
-                        BaudBound.getProgramEditorDialog().show(DialogMode.CREATE, null);
-                    },
-                    () -> {
-                        ImGui.closeCurrentPopup();
-                        BaudBound.getProgramEditorDialog().show(DialogMode.EDIT, items.get(selected.get()));
-                    },
+                    () -> BaudBound.getProgramEditorDialog().show(DialogMode.CREATE, null),
+                    () -> BaudBound.getProgramEditorDialog().show(DialogMode.EDIT, items.get(selected.get())),
                     () -> {
                         DataStore.Actions.Program copy = items.get(selected.get()).deepCopy();
                         copy.setName(copy.getName() + " (copy)");
@@ -56,8 +53,7 @@ public class ProgramsDialog extends BaseDialog {
                     },
                     this::show
             );
-
-            endModal();
         }
+        ImGui.end();
     }
 }

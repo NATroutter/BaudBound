@@ -23,7 +23,7 @@ import java.util.List;
  * Supports both {@link DialogMode#CREATE} and {@link DialogMode#EDIT} modes. In EDIT mode
  * the existing program's data is pre-loaded into the ImGui state fields.
  * An empty arguments field is stored as {@code null} rather than an empty string.
- * When dismissed via the X button, {@link #onClose()} reopens {@link ProgramsDialog}.
+ * When dismissed via the X button, {@link #onClose()} reopens {@link fi.natroutter.baudbound.gui.windows.ProgramsWindow}.
  */
 public class ProgramEditorDialog extends BaseDialog {
 
@@ -65,7 +65,7 @@ public class ProgramEditorDialog extends BaseDialog {
 
     @Override
     protected void onClose() {
-        BaudBound.getProgramsDialog().show();
+        BaudBound.getProgramsWindow().show();
     }
 
     @Override
@@ -73,17 +73,6 @@ public class ProgramEditorDialog extends BaseDialog {
         String title = mode.getType() + " Program";
         if (beginModal(title)) {
 
-            if (ImGui.beginChild("##instructions_wrap", ImGui.getContentRegionAvailX(), 0, ImGuiChildFlags.AutoResizeY)) {
-                if (ImGui.collapsingHeader("Instructions")) {
-                    ImGui.indent(8);
-                    ImGui.spacing();
-                    GuiHelper.instructions("fields (Path, Arguments)");
-                    ImGui.spacing();
-                    ImGui.unindent(8);
-                }
-            }
-            ImGui.endChild();
-            ImGui.spacing();
 
 
             ImGui.text("Name");
@@ -103,7 +92,30 @@ public class ProgramEditorDialog extends BaseDialog {
             ImGui.spacing();
             ImGui.separator();
             ImGui.spacing();
-            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
+
+            float btnWidth = (ImGui.getContentRegionAvailX() - ImGui.getStyle().getItemSpacingX()) / 2;
+
+            boolean pathEmpty = fieldPath.get().trim().isEmpty();
+            ImGui.beginDisabled(pathEmpty);
+            if (ImGui.button("Test", new ImVec2(btnWidth, GuiTheme.BUTTON_HEIGHT))) {
+                String path = fieldPath.get().trim();
+                String args = fieldArguments.get().trim();
+                boolean runAsAdmin = fieldRunAsAdmin.get();
+                Thread.ofVirtual().start(() -> {
+                    try {
+                        BaudBound.getEventHandler().launchProgram(path, args.isEmpty() ? null : args, runAsAdmin);
+                        String adminTag = runAsAdmin ? " [admin]" : "";
+                        String argsTag  = args.isEmpty() ? "" : " args=\"" + args + "\"";
+                        logger.info("Test launch: " + path + argsTag + adminTag);
+                    } catch (Exception e) {
+                        logger.error("Test launch failed: " + e.getMessage());
+                    }
+                });
+            }
+            ImGui.endDisabled();
+
+            ImGui.sameLine();
+            if (ImGui.button("Save", new ImVec2(btnWidth, GuiTheme.BUTTON_HEIGHT))) {
                 save();
             }
 
@@ -145,6 +157,6 @@ public class ProgramEditorDialog extends BaseDialog {
         logger.info("Saved program: " + name);
         storage.save();
         ImGui.closeCurrentPopup();
-        BaudBound.getMessageDialog().show("Saved", "Program \"" + name + "\" saved successfully.", new DialogButton("OK", () -> BaudBound.getProgramsDialog().show()));
+        BaudBound.getMessageDialog().show("Saved", "Program \"" + name + "\" saved successfully.", new DialogButton("OK", () -> BaudBound.getProgramsWindow().show()));
     }
 }

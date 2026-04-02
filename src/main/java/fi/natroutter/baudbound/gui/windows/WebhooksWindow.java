@@ -1,46 +1,43 @@
-package fi.natroutter.baudbound.gui.dialog.webhook;
+package fi.natroutter.baudbound.gui.windows;
 
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.enums.DialogMode;
-import fi.natroutter.baudbound.gui.dialog.BaseDialog;
+import fi.natroutter.baudbound.gui.BaseWindow;
 import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
+import imgui.flag.ImGuiCond;
 import imgui.type.ImInt;
 
 import java.util.List;
 
-
 /**
- * Modal list dialog for managing saved webhook definitions.
+ * Floating panel window for managing saved webhook definitions.
  * <p>
  * Displays all webhooks in a scrollable list with Create / Edit / Duplicate / Delete buttons.
- * Create and Edit close this dialog first and open {@link WebhookEditorDialog} instead;
- * {@code WebhookEditorDialog} reopens this dialog via {@code onClose()}.
+ * Create and Edit open {@link fi.natroutter.baudbound.gui.dialog.webhook.WebhookEditorDialog};
+ * {@code WebhookEditorDialog} reopens this window via its {@code onClose()} override.
  */
-public class WebhooksDialog extends BaseDialog {
+public class WebhooksWindow extends BaseWindow {
 
     private final StorageProvider storage = BaudBound.getStorageProvider();
-
     private final ImInt selected = new ImInt(0);
     private final List<DataStore.Actions.Webhook> items = storage.getData().getActions().getWebhooks();
 
     @Override
     public void render() {
-        float fixedH = ImGui.getIO().getDisplaySizeY() * 0.5f;
-        if (beginModal("Webhooks", fixedH)) {
+        if (!open.get()) return;
+
+        ImGui.setNextWindowSize(520, 380, ImGuiCond.FirstUseEver);
+        ImGui.setNextWindowSizeConstraints(300, 200, Float.MAX_VALUE, Float.MAX_VALUE);
+
+        if (ImGui.begin("Webhooks##webhookswindow", open)) {
 
             GuiHelper.listAndEditorButtons(
                     "##webhooks", items, selected, true,
-                    () -> {
-                        ImGui.closeCurrentPopup();
-                        BaudBound.getWebhookEditorDialog().show(DialogMode.CREATE, null);
-                    },
-                    () -> {
-                        ImGui.closeCurrentPopup();
-                        BaudBound.getWebhookEditorDialog().show(DialogMode.EDIT, items.get(selected.get()));
-                    },
+                    () -> BaudBound.getWebhookEditorDialog().show(DialogMode.CREATE, null),
+                    () -> BaudBound.getWebhookEditorDialog().show(DialogMode.EDIT, items.get(selected.get())),
                     () -> {
                         DataStore.Actions.Webhook copy = items.get(selected.get()).deepCopy();
                         copy.setName(copy.getName() + " (copy)");
@@ -56,8 +53,7 @@ public class WebhooksDialog extends BaseDialog {
                     },
                     this::show
             );
-
-            endModal();
         }
+        ImGui.end();
     }
 }

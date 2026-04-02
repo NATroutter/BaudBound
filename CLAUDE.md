@@ -7,6 +7,7 @@ A Java 21 desktop app that listens to a serial port and maps incoming lines to s
 - **Java 21**, **Maven** — `mvn package` produces a shaded fat JAR
 - **imgui-java-app** — ImGui bindings + GLFW application loop (`BaudBound extends Application`)
 - **jSerialComm** — serial port access
+- **Java-WebSocket 1.5.6** — built-in WebSocket server trigger source
 - **foxlib** — logging, update checker, URL opener
 - **Gson** — JSON config persistence
 - **Lombok** — `@Data`, `@Getter`, `@AllArgsConstructor`, `@NoArgsConstructor` on data classes
@@ -16,11 +17,16 @@ A Java 21 desktop app that listens to a serial port and maps incoming lines to s
 ```
 fi.natroutter.baudbound/
 ├── BaudBound.java            # Entry point; all singletons initialized here
-├── enums/                    # ActionType, ConditionType, HttpMethod, Parity, FlowControl, DialogMode
-│   └── EnumUtil.java         # Shared getByName / findIndex — delegates here, never copy-paste
-├── event/EventHandler.java   # Processes serial input, matches conditions, fires actions
+├── enums/                    # ActionType, ConditionType, HttpMethod, Parity, FlowControl, DialogMode, TriggerSource
+│   ├── EnumUtil.java         # Shared getByName / findIndex — delegates here, never copy-paste
+│   └── TriggerSource.java    # SERIAL, WEBSOCKET, DEVICE_CONNECTED, DEVICE_DISCONNECTED; shortLabel() for table column
+├── event/
+│   ├── EventHandler.java     # Primary: process(TriggerContext); filters events by trigger source before condition matching
+│   └── TriggerContext.java   # record: input, device (nullable), source; static factories: serial/webSocket/deviceConnected/deviceDisconnected
+├── websocket/
+│   └── WebSocketHandler.java # WebSocketServer subclass; optional token auth (AUTH:<token> first message); fires TriggerContext.webSocket() on message
 ├── http/HttpHandler.java     # Fires webhook HTTP requests
-├── serial/SerialHandler.java          # Connect / disconnect / read loop (per-device)
+├── serial/SerialHandler.java          # Connect / disconnect / read loop (per-device); fires DEVICE_CONNECTED/DEVICE_DISCONNECTED lifecycle events
 ├── serial/DeviceConnectionManager.java # Manages one SerialHandler per DataStore.Device
 ├── storage/                           # DataStore (POJO model) + StorageProvider (load/save)
 ├── command/Command.java               # Abstract base — subclasses call super(name, description) and implement execute()
@@ -45,22 +51,30 @@ fi.natroutter.baudbound/
 ├── system/ShortcutManager.java
 ├── system/UpdateManager.java    # Download-and-restart for JAR self-update
 └── gui/
-    ├── MainWindow.java       # Fullscreen event-list window
+    ├── BaseWindow.java       # Base class for floating movable panel windows (ImGui.begin); show/close/toggle/isOpen
+    ├── MainWindow.java       # Top-level render coordinator; delegates to MenuBar
     ├── DebugOverlay.java     # Real-time debug overlay (FPS, memory, JVM, devices, states)
-    ├── MenuBar.java
+    ├── MenuBar.java          # Standalone main menu bar (ImGui.beginMainMenuBar); toggle items for each panel window
     ├── theme/GuiTheme.java
-    ├── util/GuiHelper.java   # listAndEditorButtons, keyValueTable, renderClickableLink, instructions
-    └── dialog/
-        ├── BaseDialog.java           # All dialogs extend this
+    ├── util/GuiHelper.java   # listAndEditorButtons, tableAndEditorButtons, multiSelectCombo, keyValueTable, clickableLink, instructions, toolTip
+    ├── windows/                  # ALL BaseWindow subclasses — floating, moveable, resizable panels
+    │   ├── EventsWindow.java     # Floating events list panel; Name/Trigger Sources/Conditions/Actions table
+    │   ├── LogsWindow.java       # Floating log viewer panel; Debug → Logs toggle
+    │   ├── StatesWindow.java     # Floating active-states panel; Debug → States toggle
+    │   ├── SimulateWindow.java   # Floating simulate panel (all trigger sources); Debug → Simulate toggle
+    │   ├── WebSocketWindow.java  # Floating WebSocket config/status panel; Triggers → WebSocket toggle
+    │   ├── DevicesWindow.java    # Floating serial devices manager; Triggers → Serial Devices toggle
+    │   ├── WebhooksWindow.java   # Floating webhooks manager; Actions → Webhooks toggle
+    │   └── ProgramsWindow.java   # Floating programs manager; Actions → Programs toggle
+    └── dialog/                   # ALL BaseDialog subclasses — modal, blocking popups
+        ├── BaseDialog.java           # Base for modal popups (ImGui.openPopup / beginPopupModal)
         ├── MessageDialog.java        # Generic popup (does NOT extend BaseDialog)
-        ├── AboutDialog / SettingsDialog / EventEditorDialog
+        ├── AboutDialog.java / SettingsDialog.java / EventEditorDialog.java  # Modal dialogs
         ├── UpdateDialog.java             # Update available: version info, release notes, download flow
-        ├── LogsDialog.java               # In-session log viewer (Help → Logs); reads BaudBound.logBuffer
-        ├── SimulateDialog.java           # Simulate serial input through the event system (Simulate menu)
         ├── components/DialogButton.java
-        ├── device/   DevicesDialog, DeviceEditorDialog
-        ├── webhook/  WebhooksDialog, WebhookEditorDialog
-        └── program/  ProgramsDialog, ProgramEditorDialog
+        ├── device/   DeviceEditorDialog (BaseDialog)
+        ├── webhook/  WebhookEditorDialog (BaseDialog)
+        └── program/  ProgramEditorDialog (BaseDialog)
 ```
 
 ## How to build
@@ -82,7 +96,7 @@ java -jar target/baudbound-1.0.0.jar
 
 - **Cross-thread**: GLFW calls must happen on the GLFW main thread. AWT tray callbacks set `volatile boolean` flags (`pendingShow`, `pendingExit`) that are consumed in `process()`. Never call GLFW from an AWT or virtual thread.
 - **Cleanup**: Use `dispose()` (called after the GLFW loop exits), not shutdown hooks.
-- **Dialog navigation**: Editor dialogs override `onClose()` in `BaseDialog` to reopen their parent list dialog when the X button is clicked.
+- **Dialog navigation**: Editor dialogs override `onClose()` in `BaseDialog` to reopen their parent list window when the X button is clicked.
 - **Storage**: Always call `storage.save()` after mutating `DataStore`.
 - **Null returns**: Collection-returning methods must return `List.of()`, never `null`.
 

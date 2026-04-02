@@ -38,7 +38,15 @@ public enum ActionType {
     /** Clear the internal pending-state variable. No value field is used. */
     CLEAR_STATE("Clear State"),
     /** Write a command/data string to a connected serial device. */
-    SEND_TO_DEVICE("Send to Device");
+    SEND_TO_DEVICE("Send to Device"),
+    /**
+     * Send a message to a WebSocket channel. When the channel field is blank, replies
+     * to the connection that triggered this event.
+     * Supports {@code {input}}, {@code {channel}}, and {@code {timestamp}} substitution.
+     */
+    SEND_WEBSOCKET("Send WebSocket"),
+    /** Execute a shell command on the operating system. Supports {@code {input}}, {@code {channel}}, and {@code {timestamp}} substitution. */
+    RUN_COMMAND("Run Command");
 
     private final String friendlyName;
 

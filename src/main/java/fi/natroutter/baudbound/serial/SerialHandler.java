@@ -6,6 +6,7 @@ import fi.natroutter.baudbound.enums.ConnectionStatus;
 import fi.natroutter.baudbound.enums.FlowControl;
 import fi.natroutter.baudbound.enums.Parity;
 import fi.natroutter.baudbound.event.EventHandler;
+import fi.natroutter.baudbound.event.TriggerContext;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.foxlib.logger.FoxLogger;
 import lombok.Getter;
@@ -103,6 +104,8 @@ public class SerialHandler {
 
         status = ConnectionStatus.CONNECTED;
         logger.info("[" + device.getName() + "] Connected to " + device.getPort());
+        Thread.ofVirtual().start(() ->
+                BaudBound.getEventHandler().process(TriggerContext.deviceConnected(device)));
 
         listenerThread = Thread.ofVirtual().start(this::readLoop);
     }
@@ -127,6 +130,10 @@ public class SerialHandler {
         }
 
         logger.info("[" + device.getName() + "] Disconnected from serial port.");
+        if (!shuttingDown) {
+            Thread.ofVirtual().start(() ->
+                    BaudBound.getEventHandler().process(TriggerContext.deviceDisconnected(device)));
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -179,7 +186,7 @@ public class SerialHandler {
 
         cleanupPort();
 
-        if (!shuttingDown && status == ConnectionStatus.NO_DEVICE && device.isAutoConnect()) {
+        if (!shuttingDown && status == ConnectionStatus.NO_DEVICE && device.isAutoReconnect()) {
             startReconnectLoop();
         }
     }
@@ -198,6 +205,8 @@ public class SerialHandler {
         if (!shuttingDown && status == ConnectionStatus.CONNECTED) {
             logger.error("[" + device.getName() + "] " + message);
             status = ConnectionStatus.NO_DEVICE;
+            Thread.ofVirtual().start(() ->
+                    BaudBound.getEventHandler().process(TriggerContext.deviceDisconnected(device)));
         }
     }
 
@@ -211,19 +220,48 @@ public class SerialHandler {
 
     private void startReconnectLoop() {
         Thread.ofVirtual().start(() -> {
-            logger.info("[" + device.getName() + "] Auto-reconnect enabled — retrying every 5 seconds...");
+            long delayMs = device.getEffectiveReconnectDelay() * 1000L;
+            logger.info("[" + device.getName() + "] Auto-reconnect enabled — retrying every "
+                    + device.getEffectiveReconnectDelay() + " seconds...");
             while (status == ConnectionStatus.NO_DEVICE) {
                 try {
-                    Thread.sleep(5000);
+                    Thread.sleep(delayMs);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
                 if (status != ConnectionStatus.NO_DEVICE) break;
+                if (device.isVerifyDevice() && !isExpectedDevice()) {
+                    logger.info("[" + device.getName() + "] Skipping reconnect — USB identity does not match.");
+                    continue;
+                }
                 logger.info("[" + device.getName() + "] Attempting to reconnect...");
                 connect();
             }
         });
+    }
+
+    /**
+     * Returns {@code true} if the port currently listed by the OS for {@code device.getPort()}
+     * matches the USB identity stored on the device.
+     * <p>
+     * Matches by serial number when one is stored; falls back to vendor + product ID pair when
+     * the serial number is blank (common for cheap USB-Serial adapters).
+     * Returns {@code false} if the port is not currently visible to the OS.
+     */
+    private boolean isExpectedDevice() {
+        String portName = device.getPort();
+        if (portName == null || portName.isBlank()) return false;
+        for (SerialPort p : SerialPort.getCommPorts()) {
+            if (!portName.equals(p.getSystemPortName())) continue;
+            String storedSerial = device.getDeviceSerial();
+            if (storedSerial != null && !storedSerial.isBlank()) {
+                return storedSerial.equals(p.getSerialNumber());
+            }
+            return device.getDeviceVendorId() == p.getVendorID()
+                    && device.getDeviceProductId() == p.getProductID();
+        }
+        return false;
     }
 
     /**

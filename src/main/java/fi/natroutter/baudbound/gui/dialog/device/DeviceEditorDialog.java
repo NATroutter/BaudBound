@@ -11,6 +11,7 @@ import fi.natroutter.baudbound.enums.Parity;
 import fi.natroutter.baudbound.gui.dialog.BaseDialog;
 import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
 import fi.natroutter.baudbound.gui.theme.GuiTheme;
+import fi.natroutter.baudbound.gui.util.GuiHelper;
 import fi.natroutter.baudbound.serial.DeviceConnectionManager;
 import fi.natroutter.baudbound.serial.SerialHandler;
 import fi.natroutter.baudbound.storage.DataStore;
@@ -35,7 +36,7 @@ import java.util.stream.IntStream;
  * <p>
  * If the device being edited is currently connected, saving will disconnect it first so
  * the updated settings take effect on the next connection attempt.
- * When dismissed via the X button, {@link #onClose()} reopens {@link DevicesDialog}.
+ * When dismissed via the X button, {@link #onClose()} reopens {@link fi.natroutter.baudbound.gui.windows.DevicesWindow}.
  */
 public class DeviceEditorDialog extends BaseDialog {
 
@@ -53,7 +54,10 @@ public class DeviceEditorDialog extends BaseDialog {
     private final ImInt     fieldStopBits    = new ImInt(0);
     private final ImInt     fieldParity      = new ImInt(0);
     private final ImInt     fieldFlowControl = new ImInt(0);
-    private final ImBoolean fieldAutoConnect = new ImBoolean(false);
+    private final ImBoolean fieldAutoConnect    = new ImBoolean(false);
+    private final ImBoolean fieldAutoReconnect  = new ImBoolean(false);
+    private final ImInt     fieldReconnectDelay = new ImInt(5);
+    private final ImBoolean fieldVerifyDevice   = new ImBoolean(false);
 
     private List<SerialPort> availablePorts;
     private String[] portNames;
@@ -86,6 +90,9 @@ public class DeviceEditorDialog extends BaseDialog {
             fieldParity.set(EnumUtil.findIndex(Parity.class, device.getParity()));
             fieldFlowControl.set(EnumUtil.findIndex(FlowControl.class, device.getFlowControl()));
             fieldAutoConnect.set(device.isAutoConnect());
+            fieldAutoReconnect.set(device.isAutoReconnect());
+            fieldReconnectDelay.set(device.getEffectiveReconnectDelay());
+            fieldVerifyDevice.set(device.isVerifyDevice());
         } else {
             this.editing = null;
             fieldName.set("");
@@ -96,6 +103,9 @@ public class DeviceEditorDialog extends BaseDialog {
             fieldParity.set(0);
             fieldFlowControl.set(0);
             fieldAutoConnect.set(false);
+            fieldAutoReconnect.set(false);
+            fieldReconnectDelay.set(5);
+            fieldVerifyDevice.set(false);
         }
 
         requestOpen();
@@ -103,7 +113,7 @@ public class DeviceEditorDialog extends BaseDialog {
 
     @Override
     protected void onClose() {
-        BaudBound.getDevicesDialog().show();
+        BaudBound.getDevicesWindow().show();
     }
 
     @Override
@@ -167,6 +177,28 @@ public class DeviceEditorDialog extends BaseDialog {
             ImGui.separatorText("Options");
 
             ImGui.checkbox("Auto connect on startup", fieldAutoConnect);
+
+            ImGui.checkbox("Auto reconnect on disconnect", fieldAutoReconnect);
+            GuiHelper.toolTip("Automatically attempt to reconnect if the device disconnects unexpectedly.\n"
+                    + "This is separate from startup auto-connect.");
+
+            ImGui.beginDisabled(!fieldAutoReconnect.get());
+
+            ImGui.text("Reconnect delay");
+            float secLabelW = ImGui.calcTextSize("seconds").x + ImGui.getStyle().getItemSpacingX();
+            ImGui.setNextItemWidth(ImGui.getContentRegionAvailX() - secLabelW);
+            if (ImGui.inputInt("##reconnectdelay", fieldReconnectDelay)) {
+                if (fieldReconnectDelay.get() < 1) fieldReconnectDelay.set(1);
+            }
+            ImGui.sameLine();
+            ImGui.textDisabled("seconds");
+            GuiHelper.toolTip("Number of seconds to wait between reconnect attempts.");
+
+            ImGui.checkbox("Verify device identity on reconnect", fieldVerifyDevice);
+            GuiHelper.toolTip("Only reconnect if the USB identity (serial number, or vendor/product ID)\n"
+                    + "matches the device that was saved. Requires the device to be connected when saving.");
+
+            ImGui.endDisabled();
 
             ImGui.spacing();
             ImGui.separator();
@@ -267,7 +299,21 @@ public class DeviceEditorDialog extends BaseDialog {
         int stopBits    = Integer.parseInt(stopBitsOpts[fieldStopBits.get()]);
         String parity   = Parity.values()[fieldParity.get()].name();
         String flow     = FlowControl.values()[fieldFlowControl.get()].name();
-        boolean autoConnect = fieldAutoConnect.get();
+        boolean autoConnect    = fieldAutoConnect.get();
+        boolean autoReconnect  = fieldAutoReconnect.get();
+        int     reconnectDelay = fieldReconnectDelay.get();
+        boolean verifyDevice   = fieldVerifyDevice.get();
+
+        // Capture USB identity when verify-device is enabled
+        String deviceSerial   = null;
+        int    deviceVendorId = 0;
+        int    deviceProductId = 0;
+        if (verifyDevice && availablePorts != null && !availablePorts.isEmpty() && fieldPort.get() >= 0) {
+            SerialPort selectedPort = availablePorts.get(fieldPort.get());
+            deviceSerial    = selectedPort.getSerialNumber();
+            deviceVendorId  = selectedPort.getVendorID();
+            deviceProductId = selectedPort.getProductID();
+        }
 
         if (mode == DialogMode.EDIT && editing != null) {
             // Disconnect before applying new settings
@@ -283,15 +329,36 @@ public class DeviceEditorDialog extends BaseDialog {
             editing.setParity(parity);
             editing.setFlowControl(flow);
             editing.setAutoConnect(autoConnect);
+            editing.setAutoReconnect(autoReconnect);
+            editing.setReconnectDelay(reconnectDelay);
+            editing.setVerifyDevice(verifyDevice);
+            editing.setDeviceSerial(deviceSerial);
+            editing.setDeviceVendorId(deviceVendorId);
+            editing.setDeviceProductId(deviceProductId);
         } else {
-            devices.add(new DataStore.Device(name, port, baudRate, dataBits, stopBits, parity, flow, autoConnect));
+            DataStore.Device d = new DataStore.Device();
+            d.setName(name);
+            d.setPort(port);
+            d.setBaudRate(baudRate);
+            d.setDataBits(dataBits);
+            d.setStopBits(stopBits);
+            d.setParity(parity);
+            d.setFlowControl(flow);
+            d.setAutoConnect(autoConnect);
+            d.setAutoReconnect(autoReconnect);
+            d.setReconnectDelay(reconnectDelay);
+            d.setVerifyDevice(verifyDevice);
+            d.setDeviceSerial(deviceSerial);
+            d.setDeviceVendorId(deviceVendorId);
+            d.setDeviceProductId(deviceProductId);
+            devices.add(d);
         }
 
         storage.save();
         logger.info("Device \"" + name + "\" saved.");
         ImGui.closeCurrentPopup();
         BaudBound.getMessageDialog().show("Saved", "Device \"" + name + "\" saved successfully.",
-                new DialogButton("OK", () -> BaudBound.getDevicesDialog().show()));
+                new DialogButton("OK", () -> BaudBound.getDevicesWindow().show()));
     }
 
     /** Returns the index of the first port not already assigned to another device, or {@code -1} if all are in use. */

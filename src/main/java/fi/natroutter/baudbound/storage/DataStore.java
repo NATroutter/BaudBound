@@ -3,6 +3,7 @@ package fi.natroutter.baudbound.storage;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.SerializedName;
+import fi.natroutter.baudbound.enums.TriggerSource;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -57,6 +58,9 @@ public class DataStore {
 
         @SerializedName("debug")
         private Debug debug = new Debug();
+
+        @SerializedName("websocket")
+        private WebSocket webSocket = new WebSocket();
 
         @Data
         @NoArgsConstructor
@@ -140,13 +144,58 @@ public class DataStore {
             @SerializedName("fps_limit")
             private int fpsLimit;
 
+        }
+
+        /**
+         * Configuration for the built-in WebSocket server trigger source.
+         * <p>
+         * When {@code enabled} is {@code true}, BaudBound listens on {@link #getEffectiveHost()}:
+         * {@link #getEffectivePort()} and fires events tagged with {@link TriggerSource#WEBSOCKET}
+         * for each incoming message.
+         * If {@code authToken} is non-blank, clients must send {@code AUTH:<token>} as their first
+         * message before any subsequent messages are processed.
+         */
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class WebSocket {
+
+            @SerializedName("enabled")
+            private boolean enabled;
+
+            @SerializedName("host")
+            private String host;
+
+            @SerializedName("port")
+            private int port;
+
+            @SerializedName("auth_token")
+            private String authToken;
+
+            /**
+             * Returns the configured bind host, defaulting to {@code "0.0.0.0"} (all interfaces)
+             * when the stored value is blank or null.
+             */
+            public String getEffectiveHost() {
+                return (host != null && !host.isBlank()) ? host : "0.0.0.0";
+            }
+
+            /**
+             * Returns the configured port, defaulting to {@code 8765} when the stored value is
+             * zero (e.g. configs written before this field existed).
+             */
+            public int getEffectivePort() {
+                return port > 0 ? port : 8765;
+            }
 
         }
 
     }
 
     /**
-     * A serial device configuration entry — name, port, serial parameters, and auto-connect flag.
+     * A serial device configuration entry — name, port, serial parameters, auto-connect flag,
+     * and optional auto-reconnect settings (reconnect on disconnect, configurable delay,
+     * and USB identity verification).
      * <p>
      * Stored in the top-level {@code devices} list in {@code storage.json}.
      */
@@ -179,9 +228,50 @@ public class DataStore {
         @SerializedName("auto_connect")
         private boolean autoConnect;
 
+        @SerializedName("auto_reconnect")
+        private boolean autoReconnect;
+
+        @SerializedName("reconnect_delay")
+        private int reconnectDelay;
+
+        @SerializedName("verify_device")
+        private boolean verifyDevice;
+
+        @SerializedName("device_serial")
+        private String deviceSerial;
+
+        @SerializedName("device_vendor_id")
+        private int deviceVendorId;
+
+        @SerializedName("device_product_id")
+        private int deviceProductId;
+
+        /**
+         * Returns the reconnect delay in seconds, defaulting to {@code 5} when the stored value
+         * is zero (e.g. devices loaded from an older {@code storage.json} that pre-dates this field).
+         */
+        public int getEffectiveReconnectDelay() {
+            return reconnectDelay > 0 ? reconnectDelay : 5;
+        }
+
         /** Returns a fully independent deep copy of this device. */
         public Device deepCopy() {
-            return new Device(name, port, baudRate, dataBits, stopBits, parity, flowControl, autoConnect);
+            Device copy = new Device();
+            copy.setName(name);
+            copy.setPort(port);
+            copy.setBaudRate(baudRate);
+            copy.setDataBits(dataBits);
+            copy.setStopBits(stopBits);
+            copy.setParity(parity);
+            copy.setFlowControl(flowControl);
+            copy.setAutoConnect(autoConnect);
+            copy.setAutoReconnect(autoReconnect);
+            copy.setReconnectDelay(reconnectDelay);
+            copy.setVerifyDevice(verifyDevice);
+            copy.setDeviceSerial(deviceSerial);
+            copy.setDeviceVendorId(deviceVendorId);
+            copy.setDeviceProductId(deviceProductId);
+            return copy;
         }
 
     }
@@ -199,6 +289,26 @@ public class DataStore {
 
         @SerializedName("actions")
         private List<Action> actions = new ArrayList<>();
+
+        /**
+         * Which trigger sources may fire this event. Stored as a list of
+         * {@link TriggerSource#name()} strings. When {@code null} or empty,
+         * {@link #getEffectiveTriggerSources()} returns {@code ["SERIAL"]} for
+         * backward compatibility with configs written before this field existed.
+         */
+        @SerializedName("trigger_sources")
+        private List<String> triggerSources;
+
+        /**
+         * Returns the configured trigger sources, defaulting to {@code ["SERIAL"]} when
+         * the field is null or empty so that existing events continue firing on serial input
+         * without requiring a config migration.
+         */
+        public List<String> getEffectiveTriggerSources() {
+            return (triggerSources == null || triggerSources.isEmpty())
+                    ? List.of(TriggerSource.SERIAL.name())
+                    : triggerSources;
+        }
 
         @Data
         @NoArgsConstructor
@@ -222,7 +332,7 @@ public class DataStore {
                     conditions.stream().map(c -> new Condition(c.getType(), c.getValue(), c.isCaseSensitive())).toList();
             List<Action> actionsCopy = actions == null ? new ArrayList<>() :
                     actions.stream().map(a -> new Action(a.getType(), a.getValue())).toList();
-            return new Event(name, conditionsCopy, actionsCopy);
+            return new Event(name, conditionsCopy, actionsCopy, new ArrayList<>(getEffectiveTriggerSources()));
         }
 
         @Data
