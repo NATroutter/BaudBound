@@ -7,7 +7,6 @@ import imgui.ImDrawList;
 import imgui.ImGui;
 import imgui.ImVec2;
 import imgui.flag.ImGuiMouseButton;
-import imgui.flag.ImGuiWindowFlags;
 import imgui.type.ImString;
 
 import java.util.ArrayList;
@@ -128,7 +127,6 @@ public class NodeEditorCanvas {
 
         // Pending wire being dragged
         if (pendingFromNodeId != null) {
-            ImVec2 mouse = ImGui.getMousePos();
             drawBezier(dl, pendingFromScreenX, pendingFromScreenY,
                        mouse.x, mouse.y, COL_WIRE_EXEC, 2f);
         }
