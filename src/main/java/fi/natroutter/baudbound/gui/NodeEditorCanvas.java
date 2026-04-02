@@ -237,7 +237,8 @@ public class NodeEditorCanvas {
         boolean isExec    = pin.kind() == NodeType.PinKind.EXEC;
         boolean connected = !isExec && isConnectedInput(event, node.getId(), pin.id());
 
-        NodeEditor.beginPin(pid, NodeEditorPinKind.Input);
+        // NodeEditorPinKind.Output = 1 = C++ Input (LEFT side); binding names are swapped vs C++
+        NodeEditor.beginPin(pid, NodeEditorPinKind.Output);
         ImVec2 cp = ImGui.getCursorScreenPos();
         ImGui.dummy(PIN_SIZE, PIN_SIZE);
         ImGui.getWindowDrawList().addCircleFilled(
@@ -276,7 +277,8 @@ public class NodeEditorCanvas {
             ImGui.sameLine();
         }
 
-        NodeEditor.beginPin(pid, NodeEditorPinKind.Output);
+        // NodeEditorPinKind.Input = 0 = C++ Output (RIGHT side); binding names are swapped vs C++
+        NodeEditor.beginPin(pid, NodeEditorPinKind.Input);
         ImVec2 cp = ImGui.getCursorScreenPos();
         ImGui.dummy(PIN_SIZE, PIN_SIZE);
         ImGui.getWindowDrawList().addCircleFilled(
