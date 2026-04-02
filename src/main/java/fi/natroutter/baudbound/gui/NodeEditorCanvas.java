@@ -269,14 +269,22 @@ public class NodeEditorCanvas {
     private void renderOutputPin(DataStore.Event.Node node, NodeType.PinDef pin) {
         long    pid    = pinId(node.getId(), pin.id());
         boolean isExec = pin.kind() == NodeType.PinKind.EXEC;
-        int color = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
+        int     color  = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
 
-        // Output pins: label left, circle right so wires exit from the right side
+        // Position the circle at the right edge using a fixed node width.
+        // Using NODE_MIN_W (constant) avoids the getContentRegionAvail feedback loop.
+        float rowStartX = ImGui.getCursorPosX();
+        float pinX      = rowStartX + NODE_MIN_W - PIN_SIZE;
+
         if (!isExec) {
-            ImGui.text(friendlyPinName(pin.id()));
-            ImGui.sameLine();
+            String label  = friendlyPinName(pin.id());
+            float  labelW = ImGui.calcTextSize(label).x;
+            ImGui.setCursorPosX(Math.max(rowStartX, pinX - labelW - 4f));
+            ImGui.text(label);
+            ImGui.sameLine(0, 0);
         }
 
+        ImGui.setCursorPosX(pinX);
         // NodeEditorPinKind.Input = 0 = C++ Output (RIGHT side); binding names are swapped vs C++
         NodeEditor.beginPin(pid, NodeEditorPinKind.Input);
         ImVec2 cp = ImGui.getCursorScreenPos();
