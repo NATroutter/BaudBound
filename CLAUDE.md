@@ -17,8 +17,9 @@ A Java 21 desktop app that listens to a serial port and maps incoming lines to s
 ```
 fi.natroutter.baudbound/
 ├── BaudBound.java            # Entry point; all singletons initialized here
-├── enums/                    # ActionType, ConditionType, HttpMethod, Parity, FlowControl, DialogMode, TriggerSource
+├── enums/                    # HttpMethod, Parity, FlowControl, DialogMode, TriggerSource, NodeType
 │   ├── EnumUtil.java         # Shared getByName / findIndex — delegates here, never copy-paste
+│   ├── NodeType.java         # TRIGGER/CONDITION/ACTION/VALUE node types with pin definitions; replaces ConditionType and ActionType
 │   └── TriggerSource.java    # SERIAL, WEBSOCKET, DEVICE_CONNECTED, DEVICE_DISCONNECTED; shortLabel() for table column
 ├── event/
 │   ├── EventHandler.java     # Primary: process(TriggerContext); filters events by trigger source before condition matching
@@ -57,8 +58,9 @@ fi.natroutter.baudbound/
     ├── MenuBar.java          # Standalone main menu bar (ImGui.beginMainMenuBar); toggle items for each panel window
     ├── theme/GuiTheme.java
     ├── util/GuiHelper.java   # listAndEditorButtons, tableAndEditorButtons, multiSelectCombo, keyValueTable, clickableLink, instructions, toolTip
+    ├── NodeEditorCanvas.java # ImGui draw-list canvas renderer for node graphs; pan/zoom, node rendering, wire bezier, drag/connect
     ├── windows/                  # ALL BaseWindow subclasses — floating, moveable, resizable panels
-    │   ├── EventsWindow.java     # Floating events list panel; Name/Trigger Sources/Conditions/Actions table
+    │   ├── EventsWindow.java     # Floating events list panel; Name/Triggers/Conditions/Actions table
     │   ├── LogsWindow.java       # Floating log viewer panel; Debug → Logs toggle
     │   ├── StatesWindow.java     # Floating active-states panel; Debug → States toggle
     │   ├── SimulateWindow.java   # Floating simulate panel (all trigger sources); Debug → Simulate toggle

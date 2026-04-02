@@ -3,6 +3,7 @@ package fi.natroutter.baudbound.command.commands;
 import fi.natroutter.baudbound.BaudBound;
 import fi.natroutter.baudbound.command.Command;
 import fi.natroutter.baudbound.command.ConsoleUI;
+import fi.natroutter.baudbound.enums.NodeType;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.foxlib.FoxLib;
 
@@ -35,8 +36,9 @@ public class EventsCommand extends Command {
         int nameWidth = events.stream().mapToInt(e -> e.getName().length()).max().orElse(0);
         List<String> rows = new ArrayList<>();
         for (DataStore.Event event : events) {
-            int conditions = event.getConditions() == null ? 0 : event.getConditions().size();
-            int actions    = event.getActions()    == null ? 0 : event.getActions().size();
+            List<DataStore.Event.Node> nodes = event.getNodes();
+            int conditions = (int)(nodes == null ? 0 : nodes.stream().filter(n -> { NodeType nt = NodeType.getByName(n.getType()); return nt != null && nt.getCategory() == NodeType.Category.CONDITION; }).count());
+            int actions    = (int)(nodes == null ? 0 : nodes.stream().filter(n -> { NodeType nt = NodeType.getByName(n.getType()); return nt != null && nt.getCategory() == NodeType.Category.ACTION; }).count());
             String name = event.getName() + " ".repeat(nameWidth - event.getName().length());
             rows.add("{BLUE}" + name + "{RESET}"
                     + "  {CYAN}" + conditions + "{RESET} condition" + (conditions == 1 ? " " : "s")
