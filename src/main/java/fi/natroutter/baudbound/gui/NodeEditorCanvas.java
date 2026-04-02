@@ -54,11 +54,13 @@ public class NodeEditorCanvas {
     // Constants
     // -------------------------------------------------------------------------
 
-    private static final float NODE_WIDTH   = 180f;
+    private static final float NODE_WIDTH   = 240f;
     private static final float HEADER_H     = 24f;
     private static final float PIN_ROW_H    = 20f;
+    private static final float PIN_LABEL_H  = 14f;   // label row above a text field
+    private static final float PIN_FIELD_H  = 22f;   // text field row height
     private static final float PIN_RADIUS   = 5f;
-    private static final float PIN_MARGIN_X = 10f;   // distance from node edge to pin centre
+    private static final float PIN_MARGIN_X = 12f;   // distance from node edge to pin centre
 
     // Colors (ABGR packed ints)
     private static final int COL_NODE_BG      = 0xFF1E2A30;
@@ -73,6 +75,7 @@ public class NodeEditorCanvas {
     private static final int COL_WIRE_EXEC    = 0xFFFFFFFF;
     private static final int COL_WIRE_STRING  = 0xFFB060FF;
     private static final int COL_TEXT         = 0xFFDDDDDD;
+    private static final int COL_LABEL        = 0xFF999999;   // dim label above text fields
     private static final int COL_GRID         = 0x22FFFFFF;
     private static final int COL_GRID_MAJOR   = 0x33FFFFFF;
 
@@ -196,8 +199,18 @@ public class NodeEditorCanvas {
 
         List<NodeType.PinDef> inputs  = nt.inputPins();
         List<NodeType.PinDef> outputs = nt.outputPins();
-        int pinRows = Math.max(inputs.size(), outputs.size());
-        float nodeH = HEADER_H + pinRows * PIN_ROW_H + 6f;
+
+        // Calculate per-input-row height: STRING pins without a wire get label+field rows
+        float[] inputRowH = new float[inputs.size()];
+        for (int i = 0; i < inputs.size(); i++) {
+            NodeType.PinDef pin = inputs.get(i);
+            boolean hasField = pin.kind() == NodeType.PinKind.STRING
+                    && !isConnectedInput(event, node.getId(), pin.id());
+            inputRowH[i] = hasField ? (PIN_LABEL_H + PIN_FIELD_H) : PIN_ROW_H;
+        }
+        float inputBodyH = 0; for (float h : inputRowH) inputBodyH += h;
+        float outputBodyH = outputs.size() * PIN_ROW_H;
+        float nodeH = HEADER_H + Math.max(inputBodyH, outputBodyH) + 8f;
 
         float sx = cx + node.getX() * zoom + panX;
         float sy = cy + node.getY() * zoom + panY;
@@ -222,51 +235,82 @@ public class NodeEditorCanvas {
         dl.addRectFilled(sx, sy, sx + sw, sy + HEADER_H * zoom, hdrColor, 4f);
         dl.addText(sx + 6f * zoom, sy + 5f * zoom, COL_TEXT, nt.getFriendlyName());
 
-        // Border — (x1,y1,x2,y2,color,rounding,thickness)
+        // Border
         int borderCol = selected ? COL_NODE_SEL : COL_NODE_BORDER;
         dl.addRect(sx, sy, sx + sw, sy + sh, borderCol, 4f, 1.5f);
 
-        float pinAreaY = sy + HEADER_H * zoom + 3f * zoom;
+        float pinAreaY = sy + HEADER_H * zoom + 4f * zoom;
 
-        // Input pins (left side)
+        // --- Input pins (left side) ---
+        float curY = pinAreaY;
         for (int i = 0; i < inputs.size(); i++) {
             NodeType.PinDef pin = inputs.get(i);
-            float pinY = pinAreaY + i * PIN_ROW_H * zoom + PIN_ROW_H * zoom * 0.5f;
+            float rowH = inputRowH[i];
+            boolean hasField = rowH > PIN_ROW_H;
             float pinX = sx + PIN_MARGIN_X * zoom;
-            int pinCol = pin.kind() == NodeType.PinKind.EXEC ? COL_PIN_EXEC : COL_PIN_STRING;
-            dl.addCircleFilled(pinX, pinY, PIN_RADIUS * zoom, pinCol);
-            dl.addText(pinX + (PIN_RADIUS + 3f) * zoom, pinY - 6f * zoom, COL_TEXT, pin.id());
-            pinScreenPos.put(node.getId() + ":" + pin.id(), new float[]{pinX, pinY});
 
-            // Inline text field if no wire connected to this input pin
-            if (pin.kind() == NodeType.PinKind.STRING && !isConnectedInput(event, node.getId(), pin.id())) {
-                float fieldX = pinX + (PIN_RADIUS + 3f) * zoom;
-                float fieldW = (sw - (PIN_MARGIN_X + PIN_RADIUS + 6f) * zoom);
+            if (hasField) {
+                // Label row: circle at label mid-height, then label text
+                float pinY = curY + PIN_LABEL_H * zoom * 0.5f;
+                int pinCol = COL_PIN_STRING;
+                dl.addCircleFilled(pinX, pinY, PIN_RADIUS * zoom, pinCol);
+                String label = friendlyPinName(pin.id());
+                dl.addText(pinX + (PIN_RADIUS + 4f) * zoom, curY + 1f * zoom, COL_LABEL, label);
+                pinScreenPos.put(node.getId() + ":" + pin.id(), new float[]{pinX, pinY});
+
+                // Field row: text input beneath the label
+                float fieldX = pinX + (PIN_RADIUS + 4f) * zoom;
+                float fieldW = sw - (PIN_MARGIN_X + PIN_RADIUS + 8f) * zoom;
                 if (fieldW > 40f) {
                     String current = node.getParams() != null ? node.getParams().getOrDefault(pin.id(), "") : "";
                     ImString imStr = new ImString(current, 256);
-                    ImGui.setCursorScreenPos(fieldX, pinY - 9f * zoom);
+                    ImGui.setCursorScreenPos(fieldX, curY + PIN_LABEL_H * zoom);
                     ImGui.setNextItemWidth(fieldW);
                     if (ImGui.inputText("##pin_" + node.getId() + "_" + pin.id(), imStr)) {
                         if (node.getParams() == null) node.setParams(new HashMap<>());
                         node.getParams().put(pin.id(), imStr.get());
                     }
                 }
+            } else {
+                // Single row: exec or connected STRING pin — circle + label on the same line
+                float pinY = curY + PIN_ROW_H * zoom * 0.5f;
+                int pinCol = pin.kind() == NodeType.PinKind.EXEC ? COL_PIN_EXEC : COL_PIN_STRING;
+                dl.addCircleFilled(pinX, pinY, PIN_RADIUS * zoom, pinCol);
+                if (pin.kind() != NodeType.PinKind.EXEC) {
+                    dl.addText(pinX + (PIN_RADIUS + 4f) * zoom, pinY - 6f * zoom, COL_TEXT, friendlyPinName(pin.id()));
+                }
+                pinScreenPos.put(node.getId() + ":" + pin.id(), new float[]{pinX, pinY});
             }
+            curY += rowH * zoom;
         }
 
-        // Output pins (right side)
+        // --- Output pins (right side) ---
+        curY = pinAreaY;
         for (int i = 0; i < outputs.size(); i++) {
             NodeType.PinDef pin = outputs.get(i);
-            float pinY = pinAreaY + i * PIN_ROW_H * zoom + PIN_ROW_H * zoom * 0.5f;
+            float pinY = curY + PIN_ROW_H * zoom * 0.5f;
             float pinX = sx + sw - PIN_MARGIN_X * zoom;
             int pinCol = pin.kind() == NodeType.PinKind.EXEC ? COL_PIN_EXEC : COL_PIN_STRING;
             dl.addCircleFilled(pinX, pinY, PIN_RADIUS * zoom, pinCol);
-            // label left of pin circle
-            float labelW = pin.id().length() * 6f * zoom;
-            dl.addText(pinX - labelW - (PIN_RADIUS + 2f) * zoom, pinY - 6f * zoom, COL_TEXT, pin.id());
+
+            // Label: right-align to just left of the circle using accurate text width
+            if (pin.kind() != NodeType.PinKind.EXEC) {
+                String label = friendlyPinName(pin.id());
+                ImVec2 ts = ImGui.calcTextSize(label);
+                float labelX = pinX - ts.x - (PIN_RADIUS + 4f) * zoom;
+                dl.addText(labelX, pinY - 6f * zoom, COL_TEXT, label);
+            }
             pinScreenPos.put(node.getId() + ":" + pin.id(), new float[]{pinX, pinY});
+            curY += PIN_ROW_H * zoom;
         }
+    }
+
+    /** Converts a raw pin ID to a user-friendly label. Strips {@code data_} prefix and capitalizes. */
+    private static String friendlyPinName(String pinId) {
+        String s = pinId.startsWith("data_") ? pinId.substring(5) : pinId;
+        s = s.replace('_', ' ');
+        if (s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     private boolean isConnectedInput(DataStore.Event event, String nodeId, String pinId) {
