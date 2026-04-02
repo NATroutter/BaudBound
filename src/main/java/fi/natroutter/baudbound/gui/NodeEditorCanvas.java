@@ -271,20 +271,23 @@ public class NodeEditorCanvas {
         boolean isExec = pin.kind() == NodeType.PinKind.EXEC;
         int     color  = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
 
-        // Position the circle at the right edge using a fixed node width.
-        // Using NODE_MIN_W (constant) avoids the getContentRegionAvail feedback loop.
-        float rowStartX = ImGui.getCursorPosX();
-        float pinX      = rowStartX + NODE_MIN_W - PIN_SIZE;
-
+        // Push the circle to the right edge using a leading dummy spacer.
+        // Total row = spacer + [label + gap] + circle = NODE_MIN_W.
+        // Using a dummy spacer is reliable inside NodeEditor's inner windows
+        // where setCursorPosX can behave unexpectedly.
         if (!isExec) {
-            String label  = friendlyPinName(pin.id());
-            float  labelW = ImGui.calcTextSize(label).x;
-            ImGui.setCursorPosX(Math.max(rowStartX, pinX - labelW - 4f));
+            String label   = friendlyPinName(pin.id());
+            float  labelW  = ImGui.calcTextSize(label).x;
+            float  spacerW = Math.max(1f, NODE_MIN_W - labelW - PIN_SIZE - 4f);
+            ImGui.dummy(spacerW, PIN_SIZE);
+            ImGui.sameLine(0, 0);
             ImGui.text(label);
+            ImGui.sameLine(0, 4f);
+        } else {
+            ImGui.dummy(Math.max(1f, NODE_MIN_W - PIN_SIZE), PIN_SIZE);
             ImGui.sameLine(0, 0);
         }
 
-        ImGui.setCursorPosX(pinX);
         // NodeEditorPinKind.Input = 0 = C++ Output (RIGHT side); binding names are swapped vs C++
         NodeEditor.beginPin(pid, NodeEditorPinKind.Input);
         ImVec2 cp = ImGui.getCursorScreenPos();
