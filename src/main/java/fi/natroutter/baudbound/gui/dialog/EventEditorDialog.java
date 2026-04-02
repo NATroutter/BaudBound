@@ -1,785 +1,274 @@
 package fi.natroutter.baudbound.gui.dialog;
 
 import fi.natroutter.baudbound.BaudBound;
-import fi.natroutter.baudbound.enums.ActionType;
-import fi.natroutter.baudbound.enums.ConditionType;
 import fi.natroutter.baudbound.enums.DialogMode;
-import fi.natroutter.baudbound.enums.TriggerSource;
-import fi.natroutter.baudbound.gui.dialog.components.DialogButton;
-import fi.natroutter.baudbound.gui.theme.GuiTheme;
-import fi.natroutter.baudbound.gui.util.GuiHelper;
+import fi.natroutter.baudbound.enums.NodeType;
+import fi.natroutter.baudbound.gui.NodeEditorCanvas;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
 import imgui.ImGui;
-import imgui.ImVec2;
-import imgui.flag.ImGuiChildFlags;
-import imgui.flag.ImGuiCol;
-import imgui.flag.ImGuiStyleVar;
-import imgui.flag.ImGuiTableColumnFlags;
-import imgui.flag.ImGuiTableFlags;
+import imgui.flag.ImGuiCond;
+import imgui.flag.ImGuiWindowFlags;
 import imgui.type.ImBoolean;
-import imgui.type.ImInt;
 import imgui.type.ImString;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
-
 
 /**
- * Modal editor for creating and modifying {@link DataStore.Event} entries.
- * <p>
- * Supports both {@link DialogMode#CREATE} and {@link DialogMode#EDIT} modes, selected
- * via the {@link #show(DialogMode, DataStore.Event)} overload. In EDIT mode the existing
- * event's data is pre-loaded into the ImGui state fields.
- * <p>
- * Conditions and actions are backed by parallel lists of ImGui state objects. Mutations
- * (remove, reorder) are deferred until after the table rendering loop to avoid modifying
- * lists while iterating.
+ * Near-fullscreen modal editor for creating and modifying {@link DataStore.Event} entries
+ * using a Blueprint-style node graph.
+ *
+ * <p>The dialog is divided into two regions:
+ * <ul>
+ *   <li>A 160 px fixed sidebar on the left with collapsing category headers (Triggers,
+ *       Conditions, Actions, Values) and a spawn button per {@link NodeType}.</li>
+ *   <li>A canvas area on the right backed by {@link NodeEditorCanvas}, with a header
+ *       strip containing the event name field, Save, and Cancel buttons.</li>
+ * </ul>
+ *
+ * <p>Supports both {@link DialogMode#CREATE} and {@link DialogMode#EDIT} modes, selected
+ * via {@link #show(DialogMode, DataStore.Event)}.
+ *
+ * <p>This class bypasses {@link BaseDialog#beginModal} because it needs a fixed
+ * near-fullscreen size; it manages the popup lifecycle directly.
  */
 public class EventEditorDialog extends BaseDialog {
 
     private final StorageProvider storage = BaudBound.getStorageProvider();
-
-    private final ImString fieldName = new ImString();
-
-    // Trigger sources — parallel to TriggerSource.values(); initialized with SERIAL checked
-    private ImBoolean[] fieldTriggerSources = initTriggerSourceDefaults();
-
-    // Conditions
-    private final List<ImString[]> fieldConditions                = new ArrayList<>();
-    private final List<ImInt>      fieldConditionTypeIndices      = new ArrayList<>();
-    private final List<ImBoolean>  fieldConditionCaseSensitive    = new ArrayList<>();
-    private final List<ImBoolean[]> fieldConditionDeviceSelections = new ArrayList<>();
-
-    // Actions
-    private final List<ImInt>    fieldActionTypes            = new ArrayList<>();
-    private final List<ImInt>    fieldActionComboIndices     = new ArrayList<>();
-    private final List<ImString> fieldActionValues           = new ArrayList<>();
-    private final List<ImString> fieldActionSecondaryValues  = new ArrayList<>();
-
-    private static final String[] NOTIFICATION_TYPES = {"INFO", "WARNING", "ERROR", "NONE"};
-
-    private String[] webhookNames = {};
-    private String[] programNames = {};
-    private String[] deviceNames  = {};
+    private final NodeEditorCanvas canvas = new NodeEditorCanvas();
 
     private DialogMode mode = DialogMode.CREATE;
-    private DataStore.Event editing = null;
+    /** Working copy of the event being edited. */
+    private DataStore.Event editingEvent = null;
+    /** Original event reference used for in-place replacement in EDIT mode. */
+    private DataStore.Event sourceEvent = null;
 
+    private final ImString fieldName = new ImString(128);
+    /** Set to {@code true} on the frame when the modal should be opened. */
+    private boolean pendingOpen = false;
+    private final ImBoolean pendingModalOpen = new ImBoolean(false);
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    /**
+     * Opens the dialog in {@link DialogMode#CREATE} mode with an empty event.
+     */
+    @Override
     public void show() {
         show(DialogMode.CREATE, null);
     }
 
+    /**
+     * Opens the dialog in the specified mode.
+     *
+     * @param dialogMode {@link DialogMode#CREATE} to start empty, or
+     *                   {@link DialogMode#EDIT} to edit an existing event
+     * @param event      the event to edit (required for EDIT mode; ignored for CREATE)
+     */
     public void show(DialogMode dialogMode, DataStore.Event event) {
         this.mode = dialogMode;
+        this.sourceEvent = event;
 
-        webhookNames = storage.getData().getActions().getWebhooks().stream()
-                .map(DataStore.Actions.Webhook::getName).toArray(String[]::new);
-        programNames = storage.getData().getActions().getPrograms().stream()
-                .map(DataStore.Actions.Program::getName).toArray(String[]::new);
-        deviceNames = storage.getData().getDevices().stream()
-                .map(DataStore.Device::getName).toArray(String[]::new);
-
-        fieldConditions.clear();
-        fieldConditionTypeIndices.clear();
-        fieldConditionCaseSensitive.clear();
-        fieldConditionDeviceSelections.clear();
-        fieldActionTypes.clear();
-        fieldActionComboIndices.clear();
-        fieldActionValues.clear();
-        fieldActionSecondaryValues.clear();
-
+        // Make a working copy so the user can cancel without mutating live data
         if (dialogMode == DialogMode.EDIT && event != null) {
-            this.editing = event;
-            fieldName.set(event.getName());
-
-            List<String> savedSources = event.getEffectiveTriggerSources();
-            TriggerSource[] allSrc = TriggerSource.values();
-            fieldTriggerSources = new ImBoolean[allSrc.length];
-            for (int i = 0; i < allSrc.length; i++) {
-                String name = allSrc[i].name();
-                fieldTriggerSources[i] = new ImBoolean(savedSources.stream().anyMatch(s -> s.equalsIgnoreCase(name)));
-            }
-
-            if (event.getConditions() != null) {
-                for (DataStore.Event.Condition c : event.getConditions()) {
-                    ConditionType condType = ConditionType.getByName(c.getType());
-                    ImString stateName = new ImString(128);
-                    ImString val = new ImString(256);
-                    if ((condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS
-                            || condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN
-                            || condType == ConditionType.STATE_BETWEEN) && c.getValue() != null) {
-                        String[] parts = c.getValue().split("\\|", 2);
-                        if (parts.length == 2) { stateName.set(parts[0].trim()); val.set(parts[1]); }
-                        else { val.set(c.getValue()); }
-                    } else if (condType == ConditionType.WEBSOCKET_HAS_PARAM && c.getValue() != null) {
-                        stateName.set(c.getValue().trim());
-                    } else if ((condType == ConditionType.WEBSOCKET_PARAM_EQUALS
-                            || condType == ConditionType.WEBSOCKET_PARAM_NOT_EQUALS
-                            || condType == ConditionType.WEBSOCKET_PARAM_CONTAINS
-                            || condType == ConditionType.WEBSOCKET_PARAM_STARTS_WITH
-                            || condType == ConditionType.WEBSOCKET_PARAM_ENDS_WITH) && c.getValue() != null) {
-                        String[] parts = c.getValue().split("\\|", 2);
-                        if (parts.length == 2) { stateName.set(parts[0].trim()); val.set(parts[1]); }
-                        else { stateName.set(c.getValue().trim()); }
-                    } else {
-                        val.set(c.getValue() != null ? c.getValue() : "");
-                    }
-                    fieldConditions.add(new ImString[]{stateName, val});
-                    fieldConditionTypeIndices.add(new ImInt(ConditionType.findIndex(c.getType())));
-                    fieldConditionCaseSensitive.add(new ImBoolean(c.isCaseSensitive()));
-
-                    ImBoolean[] deviceSel = new ImBoolean[deviceNames.length];
-                    for (int j = 0; j < deviceNames.length; j++) deviceSel[j] = new ImBoolean(false);
-                    if ((condType == ConditionType.DEVICE_EQUALS || condType == ConditionType.DEVICE_NOT_EQUALS) && c.getValue() != null) {
-                        for (String part : c.getValue().split(",")) {
-                            String name = part.trim();
-                            for (int j = 0; j < deviceNames.length; j++) {
-                                if (deviceNames[j].equalsIgnoreCase(name)) { deviceSel[j].set(true); break; }
-                            }
-                        }
-                    }
-                    fieldConditionDeviceSelections.add(deviceSel);
-                }
-            }
-
-            if (event.getActions() != null) {
-                for (DataStore.Event.Action a : event.getActions()) {
-                    ActionType actionType = ActionType.getByName(a.getType());
-                    if (actionType == null) actionType = ActionType.values()[0];
-                    fieldActionTypes.add(new ImInt(actionType.ordinal()));
-
-                    ImInt comboVal = new ImInt(0);
-                    ImString textVal = new ImString(512);
-                    ImString secondaryVal = new ImString(512);
-                    switch (actionType) {
-                        case CALL_WEBHOOK -> {
-                            for (int i = 0; i < webhookNames.length; i++) {
-                                if (webhookNames[i].equals(a.getValue())) { comboVal.set(i); break; }
-                            }
-                        }
-                        case OPEN_PROGRAM -> {
-                            for (int i = 0; i < programNames.length; i++) {
-                                if (programNames[i].equals(a.getValue())) { comboVal.set(i); break; }
-                            }
-                        }
-                        case SHOW_NOTIFICATION -> {
-                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
-                            if (parts.length == 2) {
-                                for (int k = 0; k < NOTIFICATION_TYPES.length; k++) {
-                                    if (NOTIFICATION_TYPES[k].equalsIgnoreCase(parts[0].trim())) { comboVal.set(k); break; }
-                                }
-                                textVal.set(parts[1]);
-                            } else {
-                                textVal.set(parts.length == 1 ? parts[0] : "");
-                            }
-                        }
-                        case WRITE_TO_FILE, APPEND_TO_FILE -> {
-                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
-                            textVal.set(parts.length >= 1 ? parts[0] : "");
-                            secondaryVal.set(parts.length == 2 ? parts[1] : "");
-                        }
-                        case SET_STATE -> {
-                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
-                            if (parts.length == 2) {
-                                secondaryVal.set(parts[0]); // state name
-                                textVal.set(parts[1]);      // value
-                            } else {
-                                textVal.set(parts.length == 1 ? parts[0] : "");
-                            }
-                        }
-                        case SEND_TO_DEVICE -> {
-                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
-                            if (parts.length >= 1) {
-                                for (int i = 0; i < deviceNames.length; i++) {
-                                    if (deviceNames[i].equals(parts[0].trim())) { comboVal.set(i); break; }
-                                }
-                            }
-                            textVal.set(parts.length == 2 ? parts[1] : "");
-                        }
-                        case SEND_WEBSOCKET -> {
-                            String[] parts = a.getValue() != null ? a.getValue().split("\\|", 2) : new String[]{};
-                            textVal.set(parts.length >= 1 ? parts[0] : "");       // channel
-                            secondaryVal.set(parts.length == 2 ? parts[1] : "");  // message
-                        }
-                        case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                             PLAY_SOUND, CLEAR_STATE,
-                             RUN_COMMAND -> textVal.set(a.getValue() != null ? a.getValue() : "");
-                    }
-                    fieldActionComboIndices.add(comboVal);
-                    fieldActionValues.add(textVal);
-                    fieldActionSecondaryValues.add(secondaryVal);
-                }
-            }
+            editingEvent = event.deepCopy();
+            fieldName.set(event.getName() != null ? event.getName() : "");
         } else {
-            this.editing = null;
+            editingEvent = new DataStore.Event();
+            editingEvent.setNodes(new ArrayList<>());
+            editingEvent.setConnections(new ArrayList<>());
             fieldName.set("");
-            fieldTriggerSources = initTriggerSourceDefaults();
         }
-
-        requestOpen();
+        canvas.resetView();
+        pendingOpen = true;
     }
 
+    // -------------------------------------------------------------------------
+    // Render
+    // -------------------------------------------------------------------------
+
+    /**
+     * Renders the dialog each frame. Must be called from the GLFW main thread.
+     *
+     * <p>Bypasses {@link BaseDialog#beginModal} to achieve a fixed near-fullscreen
+     * size; manages the ImGui popup lifecycle directly.
+     */
+    @Override
     public void render() {
-        String title = mode.getType() + " Event";
-        if (beginModal(title)) {
+        float displayW = ImGui.getIO().getDisplaySizeX();
+        float displayH = ImGui.getIO().getDisplaySizeY();
 
-            ImGui.text("Name");
-            GuiHelper.toolTip("Name of the event as shown in the event list.");
-            ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-            ImGui.inputText("##name", fieldName);
-
-            ImGui.spacing();
-            ImGui.text("Trigger Sources");
-            GuiHelper.toolTip("Which trigger sources can fire this event.");
-            ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-            GuiHelper.multiSelectCombo("##triggersources", TriggerSource.asFriendlyArray(), fieldTriggerSources);
-
-            ImGui.spacing();
-            ImGui.separator();
-            ImGui.spacing();
-
-            ImGui.text("Conditions");
-            GuiHelper.toolTip("All conditions must match for the event to trigger.");
-            renderConditionsTable();
-            ImGui.spacing();
-            if (ImGui.button("Add Condition", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
-                fieldConditions.add(new ImString[]{new ImString(128), new ImString(256)});
-                fieldConditionTypeIndices.add(new ImInt(0));
-                fieldConditionCaseSensitive.add(new ImBoolean(false));
-                ImBoolean[] newDeviceSel = new ImBoolean[deviceNames.length];
-                for (int j = 0; j < deviceNames.length; j++) newDeviceSel[j] = new ImBoolean(false);
-                fieldConditionDeviceSelections.add(newDeviceSel);
-            }
-
-            ImGui.spacing();
-            ImGui.separator();
-            ImGui.spacing();
-
-            ImGui.text("Actions");
-            GuiHelper.toolTip("Actions performed when all conditions are met.");
-
-            ImGui.spacing();
-            renderActionsTable();
-            ImGui.spacing();
-
-            ImGui.spacing();
-            if (ImGui.button("Add Action", new ImVec2(ImGui.getContentRegionAvailX(), 0))) {
-                fieldActionTypes.add(new ImInt(0));
-                fieldActionComboIndices.add(new ImInt(0));
-                fieldActionValues.add(new ImString(512));
-                fieldActionSecondaryValues.add(new ImString(512));
-            }
-
-            ImGui.spacing();
-            ImGui.separator();
-            ImGui.spacing();
-            if (ImGui.button("Save", new ImVec2(ImGui.getContentRegionAvailX(), GuiTheme.BUTTON_HEIGHT))) {
-                save();
-            }
-
-            endModal();
+        if (pendingOpen) {
+            ImGui.openPopup("Event Editor##evtedit");
+            pendingModalOpen.set(true);
+            pendingOpen = false;
         }
+
+        float w = displayW * 0.95f;
+        float h = displayH * 0.90f;
+        ImGui.setNextWindowPos(displayW / 2f, displayH / 2f, ImGuiCond.Always, 0.5f, 0.5f);
+        ImGui.setNextWindowSize(w, h, ImGuiCond.Always);
+
+        boolean wasOpen = ImGui.isPopupOpen("Event Editor##evtedit");
+        if (!ImGui.beginPopupModal("Event Editor##evtedit", pendingModalOpen,
+                ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove)) {
+            if (wasOpen && !pendingModalOpen.get()) {
+                pendingModalOpen.set(true);
+                onClose();
+            }
+            return;
+        }
+
+        renderContent(w, h);
+        ImGui.endPopup();
     }
 
-    private void renderConditionsTable() {
-        int removeIndex = -1, moveUpIndex = -1, moveDownIndex = -1;
+    // -------------------------------------------------------------------------
+    // Private rendering
+    // -------------------------------------------------------------------------
 
-        ImGui.pushStyleVar(ImGuiStyleVar.CellPadding, 4, 6);
-        if (ImGui.beginTable("##conditions_table", 6,
-                ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame)) {
+    /**
+     * Renders the two-column layout: sidebar on the left, canvas area on the right.
+     *
+     * @param totalW total modal width in pixels
+     * @param totalH total modal height in pixels
+     */
+    private void renderContent(float totalW, float totalH) {
+        float sidebarW = 160f;
+        float canvasW  = totalW - sidebarW - 16f; // 16 for padding/border
 
-            ImGui.tableSetupColumn("Condition", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.tableSetupColumn("Value",     ImGuiTableColumnFlags.WidthStretch);
-            ImGui.tableSetupColumn("Case sensitive",        ImGuiTableColumnFlags.WidthFixed, ImGui.calcTextSizeX("Case sensitive"));
-            ImGui.tableSetupColumn("##cup",     ImGuiTableColumnFlags.WidthFixed, 22);
-            ImGui.tableSetupColumn("##cdn",     ImGuiTableColumnFlags.WidthFixed, 22);
-            ImGui.tableSetupColumn("##crm",     ImGuiTableColumnFlags.WidthFixed, 22);
-            ImGui.tableHeadersRow();
+        // --- Sidebar ---
+        ImGui.beginChild("##sidebar", sidebarW, totalH - 40f, true);
+        renderSidebar();
+        ImGui.endChild();
 
-            for (int i = 0; i < fieldConditions.size(); i++) {
-                ImGui.tableNextRow();
+        ImGui.sameLine();
 
-                ImGui.tableSetColumnIndex(0);
-                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                ImGui.combo("##ctype" + i, fieldConditionTypeIndices.get(i), ConditionType.asFriendlyArray());
+        // --- Canvas area ---
+        ImGui.beginChild("##canvasArea", canvasW, totalH - 40f, false);
 
-                ConditionType condType = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
-                boolean noValue = !condType.requiresValue();
-                boolean noCase  = !condType.supportsCaseSensitivity();
-                if (noValue) {
-                    fieldConditions.get(i)[1].set("");
-                    fieldConditionCaseSensitive.get(i).set(false);
-                }
-
-                ImGui.tableSetColumnIndex(1);
-                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                if (condType == ConditionType.DEVICE_EQUALS || condType == ConditionType.DEVICE_NOT_EQUALS) {
-                    if (deviceNames.length > 0) {
-                        GuiHelper.multiSelectCombo("##cdev" + i, deviceNames, fieldConditionDeviceSelections.get(i));
-                    } else {
-                        ImGui.textDisabled("No devices");
-                    }
-                } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS
-                        || condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN
-                        || condType == ConditionType.STATE_BETWEEN) {
-                    float nameW = ImGui.getContentRegionAvailX() * 0.4f;
-                    ImGui.setNextItemWidth(nameW);
-                    ImGui.inputTextWithHint("##cname" + i, "State name (default)", fieldConditions.get(i)[0]);
-                    ImGui.sameLine();
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    String valHint = condType == ConditionType.STATE_BETWEEN ? "min,max (e.g. 10,50)"
-                            : (condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN) ? "Number (e.g. 42)"
-                            : "Expected value";
-                    ImGui.inputTextWithHint("##cval" + i, valHint, fieldConditions.get(i)[1]);
-                } else if (condType == ConditionType.STATE_IS_NUMERIC || condType == ConditionType.STATE_IS_EMPTY) {
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputTextWithHint("##cval" + i, "State name (blank = default)", fieldConditions.get(i)[1]);
-                } else if (condType == ConditionType.WEBSOCKET_HAS_PARAM) {
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputTextWithHint("##cname" + i, "Parameter name", fieldConditions.get(i)[0]);
-                } else if (condType == ConditionType.WEBSOCKET_PARAM_EQUALS
-                        || condType == ConditionType.WEBSOCKET_PARAM_NOT_EQUALS
-                        || condType == ConditionType.WEBSOCKET_PARAM_CONTAINS
-                        || condType == ConditionType.WEBSOCKET_PARAM_STARTS_WITH
-                        || condType == ConditionType.WEBSOCKET_PARAM_ENDS_WITH) {
-                    float nameW = ImGui.getContentRegionAvailX() * 0.4f;
-                    ImGui.setNextItemWidth(nameW);
-                    ImGui.inputTextWithHint("##cname" + i, "Parameter name", fieldConditions.get(i)[0]);
-                    ImGui.sameLine();
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputTextWithHint("##cval" + i, "Expected value", fieldConditions.get(i)[1]);
-                } else if (condType == ConditionType.WEBSOCKET_CHANNEL_EQUALS
-                        || condType == ConditionType.WEBSOCKET_CHANNEL_NOT_EQUALS
-                        || condType == ConditionType.WEBSOCKET_CHANNEL_STARTS_WITH
-                        || condType == ConditionType.WEBSOCKET_CHANNEL_CONTAINS) {
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                    ImGui.inputTextWithHint("##cval" + i, "Channel path (e.g. /sensors/temp)", fieldConditions.get(i)[1]);
-                } else {
-                    ImGui.beginDisabled(noValue);
-                    ImGui.inputText("##cval" + i, fieldConditions.get(i)[1]);
-                    ImGui.endDisabled();
-                }
-
-                ImGui.tableSetColumnIndex(2);
-                ImGui.beginDisabled(noCase);
-                float checkboxSize = ImGui.getFrameHeight();
-                ImGui.setCursorPosX(ImGui.getCursorPosX() + (ImGui.getContentRegionAvailX() - checkboxSize) / 2);
-                ImGui.checkbox("##ccs" + i, fieldConditionCaseSensitive.get(i));
-                ImGui.endDisabled();
-
-                ImGui.tableSetColumnIndex(3);
-                ImGui.beginDisabled(i == 0);
-                if (ImGui.button("^##cu" + i)) moveUpIndex = i;
-                ImGui.endDisabled();
-
-                ImGui.tableSetColumnIndex(4);
-                ImGui.beginDisabled(i == fieldConditions.size() - 1);
-                if (ImGui.button("v##cd" + i)) moveDownIndex = i;
-                ImGui.endDisabled();
-
-                ImGui.tableSetColumnIndex(5);
-                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON);
-                if (ImGui.button("X##cr" + i)) removeIndex = i;
-                ImGui.popStyleColor();
-            }
-
-            ImGui.endTable();
+        // Header strip: event name field + Save + Cancel
+        ImGui.setNextItemWidth(canvasW - 160f);
+        ImGui.inputText("##evtname", fieldName);
+        ImGui.sameLine();
+        if (ImGui.button("Save")) {
+            saveEvent();
+            ImGui.closeCurrentPopup();
         }
-        ImGui.popStyleVar();
+        ImGui.sameLine();
+        if (ImGui.button("Cancel")) {
+            ImGui.closeCurrentPopup();
+        }
 
-        int size = fieldConditions.size();
-        if (removeIndex >= 0) {
-            fieldConditions.remove(removeIndex);
-            fieldConditionTypeIndices.remove(removeIndex);
-            fieldConditionCaseSensitive.remove(removeIndex);
-            fieldConditionDeviceSelections.remove(removeIndex);
-        }
-        if (moveUpIndex > 0) {
-            Collections.swap(fieldConditions, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldConditionTypeIndices, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldConditionCaseSensitive, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldConditionDeviceSelections, moveUpIndex, moveUpIndex - 1);
-        }
-        if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
-            Collections.swap(fieldConditions, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldConditionTypeIndices, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldConditionCaseSensitive, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldConditionDeviceSelections, moveDownIndex, moveDownIndex + 1);
-        }
+        ImGui.separator();
+
+        // Node editor canvas
+        canvas.render(editingEvent, storage);
+
+        ImGui.endChild();
     }
 
-    private void renderActionsTable() {
-        int removeIndex = -1, moveUpIndex = -1, moveDownIndex = -1;
-
-        ImGui.pushStyleVar(ImGuiStyleVar.CellPadding, 4, 6);
-        if (ImGui.beginTable("##actions_table", 5,
-                ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame)) {
-
-            ImGui.tableSetupColumn("Type",  ImGuiTableColumnFlags.WidthStretch);
-            ImGui.tableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.tableSetupColumn("##up",  ImGuiTableColumnFlags.WidthFixed, 22);
-            ImGui.tableSetupColumn("##dn",  ImGuiTableColumnFlags.WidthFixed, 22);
-            ImGui.tableSetupColumn("##rm",  ImGuiTableColumnFlags.WidthFixed, 22);
-            ImGui.tableHeadersRow();
-
-            for (int i = 0; i < fieldActionTypes.size(); i++) {
-                ImGui.tableNextRow();
-
-                ImGui.tableSetColumnIndex(0);
-                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                int prevType = fieldActionTypes.get(i).get();
-                if (ImGui.combo("##atype" + i, fieldActionTypes.get(i), ActionType.asFriendlyArray())) {
-                    if (fieldActionTypes.get(i).get() != prevType) {
-                        fieldActionComboIndices.get(i).set(0);
-                        fieldActionValues.get(i).set("");
-                        fieldActionSecondaryValues.get(i).set("");
-                    }
-                }
-
-                ActionType actionType = ActionType.values()[fieldActionTypes.get(i).get()];
-
-                ImGui.tableSetColumnIndex(1);
-                ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                switch (actionType) {
-                    case CALL_WEBHOOK -> {
-                        if (webhookNames.length > 0) {
-                            ImGui.combo("##awh" + i, fieldActionComboIndices.get(i), webhookNames);
-                        } else {
-                            ImGui.textDisabled("No webhooks");
-                        }
-                    }
-                    case OPEN_PROGRAM -> {
-                        if (programNames.length > 0) {
-                            ImGui.combo("##aprog" + i, fieldActionComboIndices.get(i), programNames);
-                        } else {
-                            ImGui.textDisabled("No programs");
-                        }
-                    }
-                    case SEND_TO_DEVICE -> {
-                        float avail = ImGui.getContentRegionAvailX();
-                        float comboW = avail * 0.4f;
-                        ImGui.setNextItemWidth(comboW);
-                        if (deviceNames.length > 0) {
-                            ImGui.combo("##adev" + i, fieldActionComboIndices.get(i), deviceNames);
-                        } else {
-                            ImGui.beginDisabled();
-                            ImGui.combo("##adev" + i, fieldActionComboIndices.get(i), new String[]{"No devices"});
-                            ImGui.endDisabled();
-                        }
-                        ImGui.sameLine();
-                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                        ImGui.inputText("##atext" + i, fieldActionValues.get(i));
-                    }
-                    case SHOW_NOTIFICATION -> {
-                        float typeW = ImGui.getContentRegionAvailX() * 0.3f;
-                        ImGui.setNextItemWidth(typeW);
-                        ImGui.combo("##anotiftype" + i, fieldActionComboIndices.get(i), NOTIFICATION_TYPES);
-                        ImGui.sameLine();
-                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                        ImGui.inputTextWithHint("##atext" + i, "Message", fieldActionValues.get(i));
-                    }
-                    case WRITE_TO_FILE, APPEND_TO_FILE -> {
-                        float pathW = ImGui.getContentRegionAvailX() * 0.5f;
-                        ImGui.setNextItemWidth(pathW);
-                        ImGui.inputTextWithHint("##atext" + i, "File path", fieldActionValues.get(i));
-                        ImGui.sameLine();
-                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                        ImGui.inputTextWithHint("##asec" + i, "Content ({timestamp}: {input})", fieldActionSecondaryValues.get(i));
-                    }
-                    case SET_STATE -> {
-                        float nameW = ImGui.getContentRegionAvailX() * 0.4f;
-                        ImGui.setNextItemWidth(nameW);
-                        ImGui.inputTextWithHint("##asec" + i, "State name (default)", fieldActionSecondaryValues.get(i));
-                        ImGui.sameLine();
-                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                        ImGui.inputTextWithHint("##atext" + i, "Value", fieldActionValues.get(i));
-                    }
-                    case SEND_WEBSOCKET -> {
-                        float chanW = ImGui.getContentRegionAvailX() * 0.4f;
-                        ImGui.setNextItemWidth(chanW);
-                        ImGui.inputTextWithHint("##atext" + i, "Channel (blank = reply)", fieldActionValues.get(i));
-                        ImGui.sameLine();
-                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX());
-                        ImGui.inputTextWithHint("##asec" + i, "Message ({input}, {channel})", fieldActionSecondaryValues.get(i));
-                    }
-                    case RUN_COMMAND ->
-                        ImGui.inputTextWithHint("##atext" + i, "Command ({input}, {timestamp})", fieldActionValues.get(i));
-                    case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                         PLAY_SOUND, CLEAR_STATE -> ImGui.inputText("##atext" + i, fieldActionValues.get(i));
-                }
-
-                ImGui.tableSetColumnIndex(2);
-                ImGui.beginDisabled(i == 0);
-                if (ImGui.button("^##au" + i)) moveUpIndex = i;
-                ImGui.endDisabled();
-
-                ImGui.tableSetColumnIndex(3);
-                ImGui.beginDisabled(i == fieldActionTypes.size() - 1);
-                if (ImGui.button("v##ad" + i)) moveDownIndex = i;
-                ImGui.endDisabled();
-
-                ImGui.tableSetColumnIndex(4);
-                ImGui.pushStyleColor(ImGuiCol.Button, GuiTheme.COLOR_DELETE_BUTTON);
-                if (ImGui.button("X##ar" + i)) removeIndex = i;
-                ImGui.popStyleColor();
-            }
-
-            ImGui.endTable();
+    /**
+     * Renders the node-type palette sidebar with collapsing category headers.
+     * Clicking a button spawns a node of that type onto the canvas.
+     */
+    private void renderSidebar() {
+        // Triggers
+        if (ImGui.collapsingHeader("Triggers")) {
+            spawnButton(NodeType.SERIAL_TRIGGER);
+            spawnButton(NodeType.WEBSOCKET_TRIGGER);
+            spawnButton(NodeType.DEVICE_CONNECTED);
+            spawnButton(NodeType.DEVICE_DISCONNECTED);
         }
-        ImGui.popStyleVar();
-
-        int size = fieldActionTypes.size();
-        if (removeIndex >= 0) {
-            fieldActionTypes.remove(removeIndex);
-            fieldActionComboIndices.remove(removeIndex);
-            fieldActionValues.remove(removeIndex);
-            fieldActionSecondaryValues.remove(removeIndex);
+        // Conditions
+        if (ImGui.collapsingHeader("Conditions")) {
+            spawnButton(NodeType.EQUALS);
+            spawnButton(NodeType.NOT_EQUALS);
+            spawnButton(NodeType.CONTAINS);
+            spawnButton(NodeType.NOT_CONTAINS);
+            spawnButton(NodeType.STARTS_WITH);
+            spawnButton(NodeType.NOT_STARTS_WITH);
+            spawnButton(NodeType.ENDS_WITH);
+            spawnButton(NodeType.NOT_ENDS_WITH);
+            spawnButton(NodeType.REGEX);
+            spawnButton(NodeType.GREATER_THAN);
+            spawnButton(NodeType.LESS_THAN);
+            spawnButton(NodeType.BETWEEN);
+            spawnButton(NodeType.IS_NUMERIC);
+            spawnButton(NodeType.IS_EMPTY);
         }
-        if (moveUpIndex > 0) {
-            Collections.swap(fieldActionTypes, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldActionComboIndices, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldActionValues, moveUpIndex, moveUpIndex - 1);
-            Collections.swap(fieldActionSecondaryValues, moveUpIndex, moveUpIndex - 1);
+        // Actions
+        if (ImGui.collapsingHeader("Actions")) {
+            spawnButton(NodeType.WEBHOOK);
+            spawnButton(NodeType.OPEN_PROGRAM);
+            spawnButton(NodeType.OPEN_URL);
+            spawnButton(NodeType.TYPE_TEXT);
+            spawnButton(NodeType.SET_STATE);
+            spawnButton(NodeType.CLEAR_STATE);
+            spawnButton(NodeType.SEND_TO_DEVICE);
+            spawnButton(NodeType.SEND_WEBSOCKET);
+            spawnButton(NodeType.RUN_COMMAND);
+            spawnButton(NodeType.COPY_TO_CLIPBOARD);
+            spawnButton(NodeType.SHOW_NOTIFICATION);
+            spawnButton(NodeType.WRITE_TO_FILE);
+            spawnButton(NodeType.APPEND_TO_FILE);
+            spawnButton(NodeType.PLAY_SOUND);
         }
-        if (moveDownIndex >= 0 && moveDownIndex < size - 1) {
-            Collections.swap(fieldActionTypes, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldActionComboIndices, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldActionValues, moveDownIndex, moveDownIndex + 1);
-            Collections.swap(fieldActionSecondaryValues, moveDownIndex, moveDownIndex + 1);
+        // Values
+        if (ImGui.collapsingHeader("Values")) {
+            spawnButton(NodeType.GET_STATE);
+            spawnButton(NodeType.LITERAL);
         }
     }
 
     /**
-     * Validates all condition rows and returns a human-readable error message if any
-     * condition is invalid, or {@code null} if all pass.
+     * Renders a full-width button for the given node type and spawns a node when clicked.
+     *
+     * @param nt the node type to spawn
      */
-    private String validateConditions() {
-        for (int i = 0; i < fieldConditions.size(); i++) {
-            ConditionType type = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
-            String val = fieldConditions.get(i)[1].get().trim();
-            String label = "Condition " + (i + 1) + " (" + type.getFriendlyName() + "): ";
-
-            switch (type) {
-                case INPUT_STARTS_WITH, INPUT_ENDS_WITH, INPUT_CONTAINS, INPUT_NOT_CONTAINS, INPUT_NOT_STARTS_WITH, INPUT_EQUALS -> {
-                    if (val.isEmpty()) return label + "value cannot be empty.";
-                }
-                case INPUT_REGEX -> {
-                    if (val.isEmpty()) return label + "value cannot be empty.";
-                    try { Pattern.compile(val); }
-                    catch (PatternSyntaxException e) { return label + "invalid regex pattern: " + e.getDescription(); }
-                }
-                case INPUT_GREATER_THAN, INPUT_LESS_THAN -> {
-                    if (val.isEmpty()) return label + "value cannot be empty.";
-                    try { Double.parseDouble(val); }
-                    catch (NumberFormatException e) { return label + "value must be a number (e.g. 42 or 3.14)."; }
-                }
-                case INPUT_BETWEEN -> {
-                    String[] parts = val.split(",", 2);
-                    if (parts.length != 2) return label + "value must be 'min,max' (e.g. 10,50).";
-                    try {
-                        double min = Double.parseDouble(parts[0].trim());
-                        double max = Double.parseDouble(parts[1].trim());
-                        if (min > max) return label + "min must be less than or equal to max.";
-                    } catch (NumberFormatException e) { return label + "both min and max must be numbers (e.g. 10,50)."; }
-                }
-                case INPUT_LENGTH_EQUALS -> {
-                    if (val.isEmpty()) return label + "value cannot be empty.";
-                    try {
-                        int len = Integer.parseInt(val);
-                        if (len < 0) return label + "length cannot be negative.";
-                    } catch (NumberFormatException e) { return label + "value must be a whole number (e.g. 5)."; }
-                }
-                case INPUT_IS_NUMERIC -> {} // no value required
-                case STATE_IS_EMPTY, STATE_IS_NUMERIC -> {} // value is an optional state name; blank = default state
-                case STATE_EQUALS, STATE_NOT_EQUALS -> {
-                    if (val.isEmpty()) return label + "value cannot be empty.";
-                }
-                case STATE_LESS_THAN, STATE_GREATER_THAN -> {
-                    if (val.isEmpty()) return label + "threshold cannot be empty.";
-                    try { Double.parseDouble(val); }
-                    catch (NumberFormatException e) { return label + "threshold must be a number (e.g. 42 or 3.14)."; }
-                }
-                case STATE_BETWEEN -> {
-                    String[] parts = val.split(",", 2);
-                    if (parts.length != 2) return label + "value must be 'min,max' (e.g. 10,50).";
-                    try {
-                        double min = Double.parseDouble(parts[0].trim());
-                        double max = Double.parseDouble(parts[1].trim());
-                        if (min > max) return label + "min must be less than or equal to max.";
-                    } catch (NumberFormatException e) { return label + "both min and max must be numbers (e.g. 10,50)."; }
-                }
-                case DEVICE_EQUALS, DEVICE_NOT_EQUALS -> {
-                    if (deviceNames.length == 0) return label + "no devices configured.";
-                    ImBoolean[] sel = fieldConditionDeviceSelections.get(i);
-                    boolean anySelected = false;
-                    for (ImBoolean b : sel) { if (b.get()) { anySelected = true; break; } }
-                    if (!anySelected) return label + "select at least one device.";
-                }
-                case WEBSOCKET_HAS_PARAM -> {
-                    String paramName = fieldConditions.get(i)[0].get().trim();
-                    if (paramName.isEmpty()) return label + "parameter name cannot be empty.";
-                }
-                case WEBSOCKET_PARAM_EQUALS, WEBSOCKET_PARAM_NOT_EQUALS, WEBSOCKET_PARAM_CONTAINS,
-                     WEBSOCKET_PARAM_STARTS_WITH, WEBSOCKET_PARAM_ENDS_WITH -> {
-                    String paramName = fieldConditions.get(i)[0].get().trim();
-                    if (paramName.isEmpty()) return label + "parameter name cannot be empty.";
-                    if (val.isEmpty()) return label + "parameter value cannot be empty.";
-                }
-                case WEBSOCKET_CHANNEL_EQUALS, WEBSOCKET_CHANNEL_NOT_EQUALS,
-                     WEBSOCKET_CHANNEL_STARTS_WITH, WEBSOCKET_CHANNEL_CONTAINS -> {
-                    if (val.isEmpty()) return label + "channel path cannot be empty.";
-                }
-            }
+    private void spawnButton(NodeType nt) {
+        if (ImGui.button(nt.getFriendlyName() + "##spawn_" + nt.name())) {
+            canvas.spawnNode(editingEvent, storage, nt.name());
         }
-        return null;
     }
 
-    /** Converts the current ImGui condition state into a list of {@link DataStore.Event.Condition} objects. */
-    private List<DataStore.Event.Condition> buildConditions() {
-        List<DataStore.Event.Condition> conditions = new ArrayList<>();
-        for (int i = 0; i < fieldConditions.size(); i++) {
-            ConditionType condType = ConditionType.values()[fieldConditionTypeIndices.get(i).get()];
-            String typeName = condType.name();
-            String value;
-            if (condType == ConditionType.DEVICE_EQUALS || condType == ConditionType.DEVICE_NOT_EQUALS) {
-                StringBuilder sb = new StringBuilder();
-                ImBoolean[] sel = fieldConditionDeviceSelections.get(i);
-                for (int j = 0; j < sel.length; j++) {
-                    if (sel[j].get()) { if (!sb.isEmpty()) sb.append(","); sb.append(deviceNames[j]); }
-                }
-                value = sb.toString();
-            } else if (condType == ConditionType.STATE_EQUALS || condType == ConditionType.STATE_NOT_EQUALS
-                    || condType == ConditionType.STATE_LESS_THAN || condType == ConditionType.STATE_GREATER_THAN
-                    || condType == ConditionType.STATE_BETWEEN) {
-                String name = fieldConditions.get(i)[0].get().trim();
-                String stateVal = fieldConditions.get(i)[1].get().trim();
-                value = name.isEmpty() ? stateVal : name + "|" + stateVal;
-            } else if (condType == ConditionType.WEBSOCKET_HAS_PARAM) {
-                value = fieldConditions.get(i)[0].get().trim();
-            } else if (condType == ConditionType.WEBSOCKET_PARAM_EQUALS
-                    || condType == ConditionType.WEBSOCKET_PARAM_NOT_EQUALS
-                    || condType == ConditionType.WEBSOCKET_PARAM_CONTAINS
-                    || condType == ConditionType.WEBSOCKET_PARAM_STARTS_WITH
-                    || condType == ConditionType.WEBSOCKET_PARAM_ENDS_WITH) {
-                String paramName = fieldConditions.get(i)[0].get().trim();
-                String paramVal  = fieldConditions.get(i)[1].get().trim();
-                value = paramName + "|" + paramVal;
-            } else {
-                value = fieldConditions.get(i)[1].get().trim();
-            }
-            boolean caseSensitive = fieldConditionCaseSensitive.get(i).get();
-            conditions.add(new DataStore.Event.Condition(typeName, value, caseSensitive));
-        }
-        return conditions;
-    }
+    // -------------------------------------------------------------------------
+    // Save / close
+    // -------------------------------------------------------------------------
 
     /**
-     * Converts the current ImGui action state into a list of {@link DataStore.Event.Action} objects.
-     * Actions with a blank value are omitted unless the type allows empty values (e.g. PLAY_SOUND).
+     * Persists the working copy to storage. In EDIT mode the original event is replaced
+     * in-place; in CREATE mode the new event is appended to the events list.
      */
-    private List<DataStore.Event.Action> buildActions() {
-        List<DataStore.Event.Action> actions = new ArrayList<>();
-        for (int i = 0; i < fieldActionTypes.size(); i++) {
-            ActionType actionType = ActionType.values()[fieldActionTypes.get(i).get()];
-            String value = switch (actionType) {
-                case CALL_WEBHOOK -> webhookNames.length > 0 ? webhookNames[fieldActionComboIndices.get(i).get()] : null;
-                case OPEN_PROGRAM -> programNames.length > 0 ? programNames[fieldActionComboIndices.get(i).get()] : null;
-                case SEND_TO_DEVICE -> deviceNames.length > 0
-                        ? deviceNames[fieldActionComboIndices.get(i).get()] + "|" + fieldActionValues.get(i).get().trim()
-                        : null;
-                case SHOW_NOTIFICATION -> {
-                    String type = NOTIFICATION_TYPES[fieldActionComboIndices.get(i).get()];
-                    String msg = fieldActionValues.get(i).get().trim();
-                    yield msg.isEmpty() ? null : type + "|" + msg;
-                }
-                case WRITE_TO_FILE, APPEND_TO_FILE -> {
-                    String path = fieldActionValues.get(i).get().trim();
-                    String content = fieldActionSecondaryValues.get(i).get().trim();
-                    yield content.isEmpty() ? path : path + "|" + content;
-                }
-                case SET_STATE -> {
-                    String stateName = fieldActionSecondaryValues.get(i).get().trim();
-                    String stateVal = fieldActionValues.get(i).get().trim();
-                    yield stateName.isEmpty() ? stateVal : stateName + "|" + stateVal;
-                }
-                case SEND_WEBSOCKET -> {
-                    String wsChannel = fieldActionValues.get(i).get().trim();
-                    String wsMessage = fieldActionSecondaryValues.get(i).get().trim();
-                    yield wsChannel.isEmpty() ? wsMessage : wsChannel + "|" + wsMessage;
-                }
-                case OPEN_URL, TYPE_TEXT, COPY_TO_CLIPBOARD,
-                     PLAY_SOUND, CLEAR_STATE,
-                     RUN_COMMAND -> fieldActionValues.get(i).get().trim();
-            };
-            boolean allowEmptyValue = actionType == ActionType.PLAY_SOUND || actionType == ActionType.CLEAR_STATE;
-            if (allowEmptyValue || (value != null && !value.isBlank())) {
-                actions.add(new DataStore.Event.Action(actionType.name(), value != null ? value : ""));
-            }
-            // Note: value may be null only for CALL_WEBHOOK / OPEN_PROGRAM when no entries exist.
-        }
-        return actions;
-    }
-
-    private static ImBoolean[] initTriggerSourceDefaults() {
-        TriggerSource[] all = TriggerSource.values();
-        ImBoolean[] result = new ImBoolean[all.length];
-        for (int i = 0; i < all.length; i++) {
-            result[i] = new ImBoolean(i == 0); // SERIAL checked, rest unchecked
-        }
-        return result;
-    }
-
-    private List<String> buildTriggerSources() {
-        TriggerSource[] all = TriggerSource.values();
-        List<String> result = new ArrayList<>();
-        for (int i = 0; i < all.length; i++) {
-            if (fieldTriggerSources[i].get()) result.add(all[i].name());
-        }
-        if (result.isEmpty()) result.add(TriggerSource.SERIAL.name());
-        return result;
-    }
-
-    private void save() {
+    private void saveEvent() {
         String name = fieldName.get().trim();
-        if (name.isEmpty()) {
-            BaudBound.getMessageDialog().show("Error", "Name is required.", new DialogButton("OK", this::requestOpen));
-            return;
-        }
+        if (name.isEmpty()) name = "Unnamed Event";
+        editingEvent.setName(name);
 
-        String conditionError = validateConditions();
-        if (conditionError != null) {
-            BaudBound.getMessageDialog().show("Error", conditionError, new DialogButton("OK", this::requestOpen));
-            return;
-        }
-
-        List<DataStore.Event.Condition> conditions = buildConditions();
-        List<DataStore.Event.Action> actions = buildActions();
-        List<DataStore.Event> events = storage.getData().getEvents();
-
-        if (mode == DialogMode.EDIT && editing != null) {
-            if (!editing.getName().equalsIgnoreCase(name) && events.stream().anyMatch(e -> e.getName().equalsIgnoreCase(name))) {
-                BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::requestOpen));
-                return;
+        if (mode == DialogMode.EDIT && sourceEvent != null) {
+            List<DataStore.Event> events = storage.getData().getEvents();
+            int idx = events.indexOf(sourceEvent);
+            if (idx >= 0) {
+                events.set(idx, editingEvent);
+            } else {
+                events.add(editingEvent);
             }
-            editing.setName(name);
-            editing.setConditions(conditions);
-            editing.setActions(actions);
-            editing.setTriggerSources(buildTriggerSources());
         } else {
-            if (events.stream().anyMatch(e -> e.getName().equalsIgnoreCase(name))) {
-                BaudBound.getMessageDialog().show("Error", "An event named \"" + name + "\" already exists.", new DialogButton("OK", this::requestOpen));
-                return;
-            }
-            events.add(new DataStore.Event(name, conditions, actions, buildTriggerSources()));
+            storage.getData().getEvents().add(editingEvent);
         }
-
         storage.save();
         BaudBound.getEventHandler().invalidateSortCache();
-        ImGui.closeCurrentPopup();
-        BaudBound.getMessageDialog().show("Saved", "Event \"" + name + "\" saved successfully.", new DialogButton("OK", () -> {}));
+    }
+
+    /**
+     * Called when the dialog is dismissed via the X button.
+     * Navigates back to the {@link fi.natroutter.baudbound.gui.windows.EventsWindow}.
+     */
+    @Override
+    protected void onClose() {
+        BaudBound.getEventsWindow().show();
     }
 }
