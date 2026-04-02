@@ -153,7 +153,9 @@ public class NodeEditorCanvas {
         node.setX((-panX + 300f) / zoom);
         node.setY((-panY + 200f) / zoom);
         node.setParams(new HashMap<>());
-        if (event.getNodes() == null) event.setNodes(new ArrayList<>());
+        if (event.getNodes() == null || !(event.getNodes() instanceof ArrayList)) {
+            event.setNodes(event.getNodes() == null ? new ArrayList<>() : new ArrayList<>(event.getNodes()));
+        }
         event.getNodes().add(node);
         storage.save();
     }

@@ -345,9 +345,11 @@ public class DataStore {
         /** Returns a fully independent deep copy of this event (no shared list or condition/action/node/connection references). */
         public Event deepCopy() {
             List<Condition> conditionsCopy = conditions == null ? new ArrayList<>() :
-                    conditions.stream().map(c -> new Condition(c.getType(), c.getValue(), c.isCaseSensitive())).toList();
+                    conditions.stream().map(c -> new Condition(c.getType(), c.getValue(), c.isCaseSensitive()))
+                            .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             List<Action> actionsCopy = actions == null ? new ArrayList<>() :
-                    actions.stream().map(a -> new Action(a.getType(), a.getValue())).toList();
+                    actions.stream().map(a -> new Action(a.getType(), a.getValue()))
+                            .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             List<Node> nodesCopy = nodes == null ? new ArrayList<>() :
                     nodes.stream().map(n -> {
                         Node copy = new Node();
@@ -357,9 +359,10 @@ public class DataStore {
                         copy.setY(n.getY());
                         copy.setParams(n.getParams() == null ? new HashMap<>() : new HashMap<>(n.getParams()));
                         return copy;
-                    }).toList();
+                    }).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             List<Connection> connectionsCopy = connections == null ? new ArrayList<>() :
-                    connections.stream().map(c -> new Connection(c.getFromNodeId(), c.getFromPin(), c.getToNodeId(), c.getToPin())).toList();
+                    connections.stream().map(c -> new Connection(c.getFromNodeId(), c.getFromPin(), c.getToNodeId(), c.getToPin()))
+                            .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             Event copy = new Event();
             copy.setName(name);
             copy.setConditions(conditionsCopy);
