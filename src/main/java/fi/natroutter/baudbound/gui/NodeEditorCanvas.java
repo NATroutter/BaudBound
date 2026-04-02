@@ -119,8 +119,6 @@ public class NodeEditorCanvas {
         // Sync canvas positions back into the DataStore working copy each frame.
         // Actual persistence to disk happens when the event editor saves the event.
         syncPositions(event);
-
-        NodeEditor.setCurrentEditor(null);
     }
 
     /**
