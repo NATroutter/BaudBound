@@ -209,32 +209,34 @@ public class EventHandler {
             return;
         }
 
-        // Find the connection that leaves from (nodeId, execPin)
-        DataStore.Event.Connection conn = event.getConnections().stream()
+        // Find all connections that leave from (nodeId, execPin) — supports fan-out
+        List<DataStore.Event.Connection> conns = event.getConnections().stream()
                 .filter(c -> c.getFromNodeId().equals(nodeId) && c.getFromPin().equals(execPin))
-                .findFirst().orElse(null);
-        if (conn == null) return;
+                .toList();
+        if (conns.isEmpty()) return;
 
-        DataStore.Event.Node nextNode = findNode(event, conn.getToNodeId());
-        if (nextNode == null) return;
+        for (DataStore.Event.Connection conn : conns) {
+            DataStore.Event.Node nextNode = findNode(event, conn.getToNodeId());
+            if (nextNode == null) continue;
 
-        NodeType nt = NodeType.getByName(nextNode.getType());
-        if (nt == null) {
-            logger.warn("Unknown node type: " + nextNode.getType());
-            return;
-        }
-
-        switch (nt.getCategory()) {
-            case CONDITION -> {
-                boolean result = evaluateCondition(event, nextNode, nt, ctx, dataCache);
-                String outPin = result ? "pass" : "fail";
-                executeFrom(event, nextNode.getId(), outPin, ctx, dataCache, depth + 1);
+            NodeType nt = NodeType.getByName(nextNode.getType());
+            if (nt == null) {
+                logger.warn("Unknown node type: " + nextNode.getType());
+                continue;
             }
-            case ACTION -> {
-                fireAction(event, nextNode, nt, ctx, dataCache);
-                executeFrom(event, nextNode.getId(), "exec_out", ctx, dataCache, depth + 1);
+
+            switch (nt.getCategory()) {
+                case CONDITION -> {
+                    boolean result = evaluateCondition(event, nextNode, nt, ctx, dataCache);
+                    String outPin = result ? "pass" : "fail";
+                    executeFrom(event, nextNode.getId(), outPin, ctx, dataCache, depth + 1);
+                }
+                case ACTION -> {
+                    fireAction(event, nextNode, nt, ctx, dataCache);
+                    executeFrom(event, nextNode.getId(), "exec_out", ctx, dataCache, depth + 1);
+                }
+                default -> logger.warn("Unexpected node category in exec chain: " + nt.getCategory());
             }
-            default -> logger.warn("Unexpected node category in exec chain: " + nt.getCategory());
         }
     }
 
