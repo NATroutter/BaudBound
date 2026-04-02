@@ -191,12 +191,12 @@ public enum NodeType {
     // VALUES
     // -------------------------------------------------------------------------
 
-    /** Outputs the current value of a named runtime state. */
+    // TODO(task-5): renderer must expose params "stateName" as an inline field — no data input pins
     GET_STATE("Get State", Category.VALUE, List.of(
             new PinDef("data_value", PinKind.STRING, true)
     )),
 
-    /** Outputs a hard-coded literal string. */
+    // TODO(task-5): renderer must expose params "value" as an inline field — no data input pins
     LITERAL("Literal", Category.VALUE, List.of(
             new PinDef("data_value", PinKind.STRING, true)
     )),
@@ -205,13 +205,13 @@ public enum NodeType {
     // ACTIONS
     // -------------------------------------------------------------------------
 
-    /** Fires a configured webhook. */
+    /** Target webhook is chosen from {@code params.get("webhookName")}; no data input pins needed. */
     WEBHOOK("Call Webhook", Category.ACTION, List.of(
             new PinDef("exec_in",  PinKind.EXEC, false),
             new PinDef("exec_out", PinKind.EXEC, true)
     )),
 
-    /** Launches a configured program. */
+    /** Target program is chosen from {@code params.get("programName")}; no data input pins needed. */
     OPEN_PROGRAM("Open Program", Category.ACTION, List.of(
             new PinDef("exec_in",  PinKind.EXEC, false),
             new PinDef("exec_out", PinKind.EXEC, true)
@@ -327,10 +327,10 @@ public enum NodeType {
         TRIGGER,
         /** Branching nodes that route execution based on a test. */
         CONDITION,
-        /** Side-effect nodes that perform an operation. */
-        ACTION,
         /** Pure data nodes that supply a value without affecting execution flow. */
-        VALUE
+        VALUE,
+        /** Side-effect nodes that perform an operation. */
+        ACTION
     }
 
     /**
@@ -399,6 +399,7 @@ public enum NodeType {
      * @return the resolved string value, or {@code ""} if the pin id is unrecognised
      */
     public String resolveContextPin(TriggerContext ctx, String pinId) {
+        if (category != Category.TRIGGER) return "";
         return switch (pinId) {
             case "data_input"   -> ctx.input()   != null ? ctx.input()            : "";
             case "data_device"  -> ctx.device()  != null ? ctx.device().getName() : "";
@@ -416,6 +417,7 @@ public enum NodeType {
      * or {@code null} if no match is found.
      *
      * @param name the enum name to look up; {@code null} returns {@code null}
+     * @return the matching {@link NodeType} constant, or {@code null} if none is found
      */
     public static NodeType getByName(String name) {
         return EnumUtil.getByName(NodeType.class, name);
