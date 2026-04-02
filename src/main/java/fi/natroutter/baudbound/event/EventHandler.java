@@ -1,8 +1,7 @@
 package fi.natroutter.baudbound.event;
 
 import fi.natroutter.baudbound.BaudBound;
-import fi.natroutter.baudbound.enums.ActionType;
-import fi.natroutter.baudbound.enums.ConditionType;
+import fi.natroutter.baudbound.enums.NodeType;
 import fi.natroutter.baudbound.http.HttpHandler;
 import fi.natroutter.baudbound.serial.DeviceConnectionManager;
 import fi.natroutter.baudbound.storage.DataStore;
@@ -23,7 +22,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,15 +37,15 @@ import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineEvent;
 
 /**
- * Processes a single line of serial input against the configured event list and fires
+ * Processes a {@link TriggerContext} through the configured node graph for each event and fires
  * the matching actions.
  * <p>
- * Each call to {@link #process} evaluates every enabled event in order, checks all of
- * its conditions against {@code input}, and dispatches each action on a virtual thread
- * so that slow actions (HTTP, file I/O, audio) never block the serial read loop.
+ * Each call to {@link #process(TriggerContext)} iterates all events, finds trigger nodes whose
+ * type matches the incoming {@link fi.natroutter.baudbound.enums.TriggerSource}, and executes the
+ * connected node graph starting from each matching trigger's {@code exec_out} pin.
  * <p>
- * Variable substitution ({@code {input}}, {@code {timestamp}}) is applied to action
- * values immediately before execution via {@link #resolve}.
+ * Variable substitution ({@code {input}}, {@code {channel}}, {@code {timestamp}}, etc.) is
+ * applied to data values immediately before execution via {@link #resolve(String, TriggerContext)}.
  */
 public class EventHandler {
 
@@ -56,25 +55,13 @@ public class EventHandler {
 
     /**
      * Named state map. Keys are state names; the special name {@value DEFAULT_STATE} is
-     * used when no explicit name is provided. Written synchronously on the serial thread
-     * so every state change is visible to the very next incoming line.
-     * <p>
-     * Format for action/condition values:
-     * <ul>
-     *   <li>{@code SET_STATE} — {@code "value"} (default state) or {@code "name|value"}</li>
-     *   <li>{@code CLEAR_STATE} — blank (default state) or {@code "name"}</li>
-     *   <li>{@code STATE_EQUALS} — {@code "value"} (default) or {@code "name|value"}</li>
-     *   <li>{@code STATE_IS_EMPTY} — blank (default) or {@code "name"}</li>
-     * </ul>
+     * used when no explicit name is provided.
      */
     private static final String DEFAULT_STATE = "default";
     private final Map<String, String> states = new ConcurrentHashMap<>();
 
-    /** Cache of compiled regex patterns keyed by pattern string to avoid recompilation on every condition check. */
+    /** Cache of compiled regex patterns keyed by pattern string to avoid recompilation on every check. */
     private final Map<String, Pattern> patternCache = new ConcurrentHashMap<>();
-
-    /** Cache of the condition-first sorted event list. Invalidated via {@link #invalidateSortCache()}. */
-    private volatile List<DataStore.Event> sortedEventsCache = null;
 
     /** Tracks all currently playing {@link Clip} instances for bulk stop support. */
     private final Set<Clip> activeClips = Collections.newSetFromMap(new ConcurrentHashMap<>());
@@ -98,19 +85,8 @@ public class EventHandler {
     }
 
     /**
-     * Stops and closes all currently playing sound clips.
-     * Safe to call from any thread.
-     */
-    public void stopAllSounds() {
-        for (Clip clip : activeClips) {
-            clip.stop();
-        }
-        logger.info("Stopped all playing sounds");
-    }
-
-    /**
      * Removes the named state entry. If {@code name} is blank, clears the default state.
-     * Safe to call from the GLFW thread since {@link ConcurrentHashMap} handles concurrent access.
+     * Safe to call from any thread since {@link ConcurrentHashMap} handles concurrent access.
      *
      * @param name the state name to clear, or blank for the default state
      */
@@ -124,11 +100,21 @@ public class EventHandler {
     }
 
     /**
-     * Invalidates the cached condition-first sorted event list.
-     * Must be called whenever the event list is modified (add, edit, remove, reorder).
+     * Stops and closes all currently playing sound clips. Safe to call from any thread.
+     */
+    public void stopAllSounds() {
+        for (Clip clip : activeClips) {
+            clip.stop();
+        }
+        logger.info("Stopped all playing sounds");
+    }
+
+    /**
+     * No-op kept for API compatibility. Previously invalidated a sort cache; the node graph
+     * execution engine does not maintain such a cache.
      */
     public void invalidateSortCache() {
-        sortedEventsCache = null;
+        // No-op: the node graph executor does not sort events.
     }
 
     /**
@@ -142,286 +128,430 @@ public class EventHandler {
     }
 
     /**
-     * Evaluates all configured events against the trigger context and fires matching actions.
-     * Events are filtered by their configured trigger sources before condition matching.
-     * Respects the {@code runFirstOnly}, {@code conditionEventsFirst}, and
-     * {@code skipEmptyConditions} settings from {@link DataStore.Settings.Event}.
+     * Evaluates all configured events against the trigger context by executing their node graphs.
+     * For each event, every trigger node whose type matches the incoming source is used as a graph
+     * entry point; execution then follows {@code exec_out} connections through condition and action nodes.
      *
-     * @param context the trigger context carrying the input payload, source, and optional device
+     * @param ctx the trigger context carrying the input payload, source, and optional device
      */
-    public void process(TriggerContext context) {
-        String input  = context.input();
-        DataStore.Device device = context.device();
-
-        DataStore data = storage.getData();
-        DataStore.Settings.Event eventSettings = data.getSettings().getEvent();
-        boolean runFirstOnly = eventSettings.isRunFirstOnly();
-
-        List<DataStore.Event> events = data.getEvents();
-        if (eventSettings.isConditionEventsFirst()) {
-            if (sortedEventsCache == null) {
-                sortedEventsCache = events.stream()
-                        .sorted((a, b) -> {
-                            boolean aHas = a.getConditions() != null && !a.getConditions().isEmpty();
-                            boolean bHas = b.getConditions() != null && !b.getConditions().isEmpty();
-                            return Boolean.compare(bHas, aHas); // events with conditions first
-                        })
-                        .toList();
-            }
-            events = sortedEventsCache;
-        }
-
-        boolean skipEmpty = eventSettings.isSkipEmptyConditions();
-        List<String> firedNames = new java.util.ArrayList<>();
+    public void process(TriggerContext ctx) {
+        List<DataStore.Event> events = storage.getData().getEvents();
 
         for (DataStore.Event event : events) {
-            boolean allowed = event.getEffectiveTriggerSources().stream()
-                    .anyMatch(s -> context.source().name().equalsIgnoreCase(s));
-            if (!allowed) continue;
+            if (event.getNodes() == null || event.getNodes().isEmpty()) continue;
 
-            boolean hasConditions = event.getConditions() != null && !event.getConditions().isEmpty();
-            if (skipEmpty && !hasConditions) continue;
+            for (DataStore.Event.Node node : event.getNodes()) {
+                NodeType nt = NodeType.getByName(node.getType());
+                if (nt == null) continue;
+                if (nt.getCategory() != NodeType.Category.TRIGGER) continue;
+                if (!nt.matchesSource(ctx.source())) continue;
 
-            if (matchesConditions(event, context)) {
-                fireAction(event, context);
-                firedNames.add(event.getName());
-                if (runFirstOnly) break;
+                executeFrom(event, node.getId(), "exec_out", ctx, new HashMap<>());
             }
         }
+    }
 
-        String tag = "[" + context.source().name() + "]"
-                + (device != null ? " (device: " + device.getName() + ")" : "");
-        if (firedNames.isEmpty()) {
-            if (!events.isEmpty()) {
-                logger.warn(tag + " No events matched input: \"" + input + "\"");
-            }
-        } else {
-            logger.info(tag + " Input: \"" + input + "\" — fired " + firedNames.size()
-                    + " event(s): " + String.join(", ", firedNames));
-        }
+    // -------------------------------------------------------------------------
+    // Graph execution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Follows the exec chain from the given node/pin, dispatching condition and action nodes.
+     *
+     * @param event     the event whose node graph is being executed
+     * @param nodeId    the ID of the node whose exec output to follow
+     * @param execPin   the exec output pin name to follow (e.g. {@code "exec_out"}, {@code "pass"}, {@code "fail"})
+     * @param ctx       the trigger context
+     * @param dataCache per-execution cache of already-resolved data pin values
+     */
+    private void executeFrom(DataStore.Event event, String nodeId, String execPin,
+                              TriggerContext ctx, Map<String, String> dataCache) {
+        executeFrom(event, nodeId, execPin, ctx, dataCache, 0);
     }
 
     /**
-     * Returns {@code true} if every condition in the event is satisfied by the trigger context.
-     * An event with no conditions always matches.
+     * Internal recursive overload with cycle-detection depth limit.
+     *
+     * @param depth current recursion depth; execution halts at 256
      */
-    private boolean matchesConditions(DataStore.Event event, TriggerContext context) {
-        String input  = context.input();
-        DataStore.Device device = context.device();
-        String channel = context.channel() != null ? context.channel() : "";
-
-        List<DataStore.Event.Condition> conditions = event.getConditions();
-        if (conditions == null || conditions.isEmpty()) return true;
-
-        for (DataStore.Event.Condition condition : conditions) {
-            ConditionType type = ConditionType.getByName(condition.getType());
-            String value = condition.getValue();
-            if (type == null) continue;
-            if (type != ConditionType.INPUT_IS_NUMERIC && type != ConditionType.STATE_IS_NUMERIC && value == null) continue;
-
-            boolean caseSensitive = condition.isCaseSensitive();
-            String  normalizedInput = caseSensitive ? input : input.toLowerCase();
-            String  normalizedValue = caseSensitive ? value : value.toLowerCase();
-
-            boolean matches = switch (type) {
-                case INPUT_STARTS_WITH -> normalizedInput.startsWith(normalizedValue);
-                case INPUT_ENDS_WITH -> normalizedInput.endsWith(normalizedValue);
-                case INPUT_CONTAINS -> normalizedInput.contains(normalizedValue);
-                case INPUT_NOT_CONTAINS -> !normalizedInput.contains(normalizedValue);
-                case INPUT_NOT_STARTS_WITH -> !normalizedInput.startsWith(normalizedValue);
-                case INPUT_EQUALS -> normalizedInput.equals(normalizedValue);
-                case INPUT_REGEX -> patternCache.computeIfAbsent(value, Pattern::compile).matcher(input).matches();
-                case INPUT_IS_NUMERIC -> isNumeric(input);
-                case INPUT_GREATER_THAN -> compareNumeric(input, value) > 0;
-                case INPUT_LESS_THAN -> compareNumeric(input, value) < 0;
-                case INPUT_BETWEEN -> isBetween(input, value);
-                case INPUT_LENGTH_EQUALS -> parseLengthEquals(input, value);
-                case STATE_EQUALS, STATE_NOT_EQUALS -> {
-                    String[] p = value.split("\\|", 2);
-                    boolean eq = p.length == 2
-                            ? p[1].equals(states.get(p[0].trim()))
-                            : value.equals(states.get(DEFAULT_STATE));
-                    yield type == ConditionType.STATE_EQUALS ? eq : !eq;
-                }
-                case STATE_IS_EMPTY -> {
-                    String name = value.isBlank() ? DEFAULT_STATE : value.trim();
-                    String v = states.get(name);
-                    yield v == null || v.isBlank();
-                }
-                case DEVICE_EQUALS, DEVICE_NOT_EQUALS -> {
-                    if (device == null || device.getName() == null) yield false;
-                    boolean matched = false;
-                    for (String part : value.split(",")) {
-                        if (part.trim().equalsIgnoreCase(device.getName())) { matched = true; break; }
-                    }
-                    yield type == ConditionType.DEVICE_EQUALS ? matched : !matched;
-                }
-                case WEBSOCKET_HAS_PARAM -> {
-                    Map<String, String> params = parseWsParams(input);
-                    yield params.containsKey(value.trim());
-                }
-                case WEBSOCKET_PARAM_EQUALS, WEBSOCKET_PARAM_NOT_EQUALS, WEBSOCKET_PARAM_CONTAINS,
-                     WEBSOCKET_PARAM_STARTS_WITH, WEBSOCKET_PARAM_ENDS_WITH -> {
-                    String[] p = value.split("\\|", 2);
-                    if (p.length < 2) yield false;
-                    Map<String, String> params = parseWsParams(input);
-                    String paramVal = params.get(p[0].trim());
-                    if (paramVal == null) yield false;
-                    String pv = caseSensitive ? paramVal : paramVal.toLowerCase();
-                    String cv = caseSensitive ? p[1] : p[1].toLowerCase();
-                    yield switch (type) {
-                        case WEBSOCKET_PARAM_EQUALS       -> pv.equals(cv);
-                        case WEBSOCKET_PARAM_NOT_EQUALS   -> !pv.equals(cv);
-                        case WEBSOCKET_PARAM_CONTAINS     -> pv.contains(cv);
-                        case WEBSOCKET_PARAM_STARTS_WITH  -> pv.startsWith(cv);
-                        case WEBSOCKET_PARAM_ENDS_WITH    -> pv.endsWith(cv);
-                        default -> false;
-                    };
-                }
-                case WEBSOCKET_CHANNEL_EQUALS -> {
-                    String nch = caseSensitive ? channel : channel.toLowerCase();
-                    yield nch.equals(normalizedValue);
-                }
-                case WEBSOCKET_CHANNEL_STARTS_WITH -> {
-                    String nch = caseSensitive ? channel : channel.toLowerCase();
-                    yield nch.startsWith(normalizedValue);
-                }
-                case WEBSOCKET_CHANNEL_CONTAINS -> {
-                    String nch = caseSensitive ? channel : channel.toLowerCase();
-                    yield nch.contains(normalizedValue);
-                }
-                case WEBSOCKET_CHANNEL_NOT_EQUALS -> {
-                    String nch = caseSensitive ? channel : channel.toLowerCase();
-                    yield !nch.equals(normalizedValue);
-                }
-                case STATE_IS_NUMERIC -> {
-                    String sname = (value == null || value.isBlank()) ? DEFAULT_STATE : value.trim();
-                    String sv = states.get(sname);
-                    yield sv != null && isNumeric(sv);
-                }
-                case STATE_LESS_THAN, STATE_GREATER_THAN, STATE_BETWEEN -> {
-                    String[] p = value.split("\\|", 2);
-                    String sname = p.length == 2 ? p[0].trim() : DEFAULT_STATE;
-                    String threshold = p.length == 2 ? p[1] : value;
-                    String sv = states.get(sname);
-                    if (sv == null || !isNumeric(sv)) yield false;
-                    yield switch (type) {
-                        case STATE_LESS_THAN    -> compareNumeric(sv, threshold) < 0;
-                        case STATE_GREATER_THAN -> compareNumeric(sv, threshold) > 0;
-                        case STATE_BETWEEN      -> isBetween(sv, threshold);
-                        default -> false;
-                    };
-                }
-            };
-
-            if (!matches) return false;
-        }
-        return true;
-    }
-
-    private void fireAction(DataStore.Event event, TriggerContext context) {
-        if (event.getActions() == null || event.getActions().isEmpty()) return;
-
-        String eventName = event.getName();
-
-        for (DataStore.Event.Action action : event.getActions()) {
-            ActionType type = ActionType.getByName(action.getType());
-            if (type == null) continue;
-            String value = action.getValue();
-
-            if (type == ActionType.SET_STATE) {
-                String[] p = value != null ? value.split("\\|", 2) : new String[]{""};
-                if (p.length == 2) {
-                    String resolved = resolve(p[1], context, eventName);
-                    states.put(p[0].trim(), resolved);
-                    logger.info("State \"" + p[0].trim() + "\" set to: \"" + resolved + "\"");
-                } else {
-                    String resolved = resolve(value != null ? value : "", context, eventName);
-                    states.put(DEFAULT_STATE, resolved);
-                    logger.info("State \"" + DEFAULT_STATE + "\" set to: \"" + resolved + "\"");
-                }
-                continue;
-            }
-            if (type == ActionType.CLEAR_STATE) {
-                String name = (value != null && !value.isBlank())
-                        ? resolve(value.trim(), context, eventName) : DEFAULT_STATE;
-                states.remove(name);
-                logger.info("State \"" + name + "\" cleared");
-                continue;
-            }
-
-            Thread.ofVirtual().start(() -> {
-                try {
-                    switch (type) {
-                        case CALL_WEBHOOK      -> callWebhook(value, context, eventName);
-                        case OPEN_URL          -> openUrl(value, context, eventName);
-                        case OPEN_PROGRAM      -> openProgram(value, context, eventName);
-                        case TYPE_TEXT         -> typeText(value, context, eventName);
-                        case COPY_TO_CLIPBOARD -> copyToClipboard(value, context, eventName);
-                        case SHOW_NOTIFICATION -> showNotification(value, context, eventName);
-                        case WRITE_TO_FILE     -> writeToFile(value, context, eventName);
-                        case APPEND_TO_FILE    -> appendToFile(value, context, eventName);
-                        case PLAY_SOUND        -> playSound(value);
-                        case SEND_TO_DEVICE    -> sendToDevice(value, context, eventName);
-                        case SEND_WEBSOCKET    -> sendWebSocket(value, context, eventName);
-                        case RUN_COMMAND       -> runCommand(value, context, eventName);
-                        default                -> logger.error("Unhandled action type: " + type);
-                    }
-                } catch (Exception e) {
-                    logger.error("Action [" + type + "] failed for event \"" + eventName + "\": " + e.getMessage());
-                }
-            });
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Actions
-    // -------------------------------------------------------------------------
-
-    private void callWebhook(String webhookName, TriggerContext context, String eventName) {
-        if (webhookName == null) return;
-
-        storage.getData().getActions().getWebhooks().stream()
-                .filter(w -> w.getName().equals(webhookName))
-                .findFirst()
-                .ifPresentOrElse(webhook -> {
-                    DataStore.Actions.Webhook resolved = resolveWebhook(webhook, context, eventName);
-                    HttpHandler.WebhookResult result = HttpHandler.fireWebhook(resolved);
-                    if (result.success()) {
-                        logger.info("Webhook \"" + webhookName + "\" responded " + result.statusCode());
-                    } else {
-                        logger.error("Webhook \"" + webhookName + "\" failed: " +
-                                (result.error() != null ? result.error() : result.statusCode()));
-                    }
-                }, () -> logger.error("Webhook not found: " + webhookName));
-    }
-
-    private void openUrl(String url, TriggerContext context, String eventName) throws IOException {
-        url = resolve(url, context, eventName);
-        if (url == null || url.isBlank()) return;
-        FoxLib.openURL(url);
-        logger.info("Opened URL: " + url);
-    }
-
-    private void openProgram(String programName, TriggerContext context, String eventName) throws IOException {
-        if (programName == null) return;
-
-        DataStore.Actions.Program program = storage.getData().getActions().getPrograms().stream()
-                .filter(p -> p.getName().equals(programName))
-                .findFirst().orElse(null);
-
-        if (program == null) {
-            logger.error("Program not found: " + programName);
+    private void executeFrom(DataStore.Event event, String nodeId, String execPin,
+                              TriggerContext ctx, Map<String, String> dataCache, int depth) {
+        if (depth > 256) {
+            logger.warn("Node graph cycle detected in event '" + event.getName() + "' — halting");
             return;
         }
 
-        String path = resolve(program.getPath(), context, eventName);
-        String args = resolve(program.getArguments(), context, eventName);
-        launchProgram(path, args, program.isRunAsAdmin());
-        String adminTag = program.isRunAsAdmin() ? " [admin]" : "";
-        String argsTag  = (args != null && !args.isBlank()) ? " args=\"" + args + "\"" : "";
-        logger.info("Launched program: " + programName + argsTag + adminTag);
+        // Find the connection that leaves from (nodeId, execPin)
+        DataStore.Event.Connection conn = event.getConnections().stream()
+                .filter(c -> c.getFromNodeId().equals(nodeId) && c.getFromPin().equals(execPin))
+                .findFirst().orElse(null);
+        if (conn == null) return;
+
+        DataStore.Event.Node nextNode = findNode(event, conn.getToNodeId());
+        if (nextNode == null) return;
+
+        NodeType nt = NodeType.getByName(nextNode.getType());
+        if (nt == null) {
+            logger.warn("Unknown node type: " + nextNode.getType());
+            return;
+        }
+
+        switch (nt.getCategory()) {
+            case CONDITION -> {
+                boolean result = evaluateCondition(event, nextNode, nt, ctx, dataCache);
+                String outPin = result ? "pass" : "fail";
+                executeFrom(event, nextNode.getId(), outPin, ctx, dataCache, depth + 1);
+            }
+            case ACTION -> {
+                Thread.ofVirtual().start(() -> fireAction(event, nextNode, nt, ctx, dataCache));
+                executeFrom(event, nextNode.getId(), "exec_out", ctx, dataCache, depth + 1);
+            }
+            default -> logger.warn("Unexpected node category in exec chain: " + nt.getCategory());
+        }
     }
+
+    // -------------------------------------------------------------------------
+    // Data pin resolution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Resolves the value of an input pin on a node. If a wire is connected to that pin the
+     * value is sourced from the upstream node's output pin; otherwise the inline param value
+     * (or empty string) is used.
+     *
+     * @param event     the event being executed
+     * @param nodeId    the ID of the node that owns the input pin
+     * @param pinId     the pin ID to resolve
+     * @param ctx       the trigger context
+     * @param dataCache per-execution cache keyed by {@code "nodeId:pinId"}
+     * @return the resolved string value; never {@code null}
+     */
+    private String resolvePin(DataStore.Event event, String nodeId, String pinId,
+                               TriggerContext ctx, Map<String, String> dataCache) {
+        String cacheKey = nodeId + ":" + pinId;
+        if (dataCache.containsKey(cacheKey)) return dataCache.get(cacheKey);
+
+        // Find wire whose toNodeId == nodeId && toPin == pinId
+        DataStore.Event.Connection wire = event.getConnections().stream()
+                .filter(c -> c.getToNodeId().equals(nodeId) && c.getToPin().equals(pinId))
+                .findFirst().orElse(null);
+
+        String result;
+        if (wire != null) {
+            result = resolveOutputPin(event, wire.getFromNodeId(), wire.getFromPin(), ctx, dataCache);
+        } else {
+            // No wire — use inline param or empty string
+            DataStore.Event.Node node = findNode(event, nodeId);
+            result = (node != null && node.getParams() != null)
+                    ? node.getParams().getOrDefault(pinId, "")
+                    : "";
+        }
+        dataCache.put(cacheKey, result);
+        return result;
+    }
+
+    /**
+     * Resolves the value produced by an output pin on a source node. Only TRIGGER and VALUE
+     * nodes produce data output; all other categories return an empty string.
+     *
+     * @param event     the event being executed
+     * @param nodeId    the ID of the source node
+     * @param pinId     the output pin ID
+     * @param ctx       the trigger context
+     * @param dataCache per-execution cache keyed by {@code "nodeId:pinId"}
+     * @return the resolved string value; never {@code null}
+     */
+    private String resolveOutputPin(DataStore.Event event, String nodeId, String pinId,
+                                     TriggerContext ctx, Map<String, String> dataCache) {
+        String cacheKey = nodeId + ":" + pinId;
+        if (dataCache.containsKey(cacheKey)) return dataCache.get(cacheKey);
+
+        DataStore.Event.Node node = findNode(event, nodeId);
+        if (node == null) return "";
+
+        NodeType nt = NodeType.getByName(node.getType());
+        if (nt == null) return "";
+
+        String result = switch (nt.getCategory()) {
+            case TRIGGER -> nt.resolveContextPin(ctx, pinId);
+            case VALUE   -> resolveValueNode(node, nt, ctx);
+            default      -> "";
+        };
+        dataCache.put(cacheKey, result);
+        return result;
+    }
+
+    /**
+     * Computes the output of a VALUE-category node.
+     *
+     * @param node the value node
+     * @param nt   the resolved {@link NodeType} for this node
+     * @param ctx  the trigger context
+     * @return the string value produced by the node
+     */
+    private String resolveValueNode(DataStore.Event.Node node, NodeType nt, TriggerContext ctx) {
+        return switch (nt) {
+            case GET_STATE -> {
+                String stateName = node.getParams() != null
+                        ? node.getParams().getOrDefault("stateName", DEFAULT_STATE)
+                        : DEFAULT_STATE;
+                yield states.getOrDefault(stateName, "");
+            }
+            case LITERAL -> {
+                String val = node.getParams() != null ? node.getParams().getOrDefault("value", "") : "";
+                yield resolve(val, ctx);
+            }
+            default -> "";
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Condition evaluation
+    // -------------------------------------------------------------------------
+
+    /**
+     * Evaluates a CONDITION node against the current execution context.
+     *
+     * @param event     the event being executed
+     * @param node      the condition node to evaluate
+     * @param nt        the resolved {@link NodeType} for this node
+     * @param ctx       the trigger context
+     * @param dataCache per-execution data pin cache
+     * @return {@code true} if the condition passes, {@code false} otherwise
+     */
+    private boolean evaluateCondition(DataStore.Event event, DataStore.Event.Node node, NodeType nt,
+                                       TriggerContext ctx, Map<String, String> dataCache) {
+        try {
+            return switch (nt) {
+                case EQUALS -> {
+                    String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
+                    String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
+                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    yield cs ? a.equals(b) : a.equalsIgnoreCase(b);
+                }
+                case NOT_EQUALS  -> !evaluateCondition(event, node, NodeType.EQUALS, ctx, dataCache);
+                case CONTAINS -> {
+                    String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
+                    String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
+                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    yield cs ? a.contains(b) : a.toLowerCase().contains(b.toLowerCase());
+                }
+                case NOT_CONTAINS -> !evaluateCondition(event, node, NodeType.CONTAINS, ctx, dataCache);
+                case STARTS_WITH -> {
+                    String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
+                    String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
+                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    yield cs ? a.startsWith(b) : a.toLowerCase().startsWith(b.toLowerCase());
+                }
+                case NOT_STARTS_WITH -> !evaluateCondition(event, node, NodeType.STARTS_WITH, ctx, dataCache);
+                case ENDS_WITH -> {
+                    String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
+                    String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
+                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    yield cs ? a.endsWith(b) : a.toLowerCase().endsWith(b.toLowerCase());
+                }
+                case NOT_ENDS_WITH -> !evaluateCondition(event, node, NodeType.ENDS_WITH, ctx, dataCache);
+                case REGEX -> {
+                    String value   = resolvePin(event, node.getId(), "data_value",   ctx, dataCache);
+                    String pattern = resolvePin(event, node.getId(), "data_pattern", ctx, dataCache);
+                    yield patternCache.computeIfAbsent(pattern, Pattern::compile).matcher(value).find();
+                }
+                case GREATER_THAN -> {
+                    double a = Double.parseDouble(resolvePin(event, node.getId(), "data_a", ctx, dataCache));
+                    double b = Double.parseDouble(resolvePin(event, node.getId(), "data_b", ctx, dataCache));
+                    yield a > b;
+                }
+                case LESS_THAN -> {
+                    double a = Double.parseDouble(resolvePin(event, node.getId(), "data_a", ctx, dataCache));
+                    double b = Double.parseDouble(resolvePin(event, node.getId(), "data_b", ctx, dataCache));
+                    yield a < b;
+                }
+                case BETWEEN -> {
+                    double val = Double.parseDouble(resolvePin(event, node.getId(), "data_value", ctx, dataCache));
+                    double min = Double.parseDouble(resolvePin(event, node.getId(), "data_min",   ctx, dataCache));
+                    double max = Double.parseDouble(resolvePin(event, node.getId(), "data_max",   ctx, dataCache));
+                    yield val >= min && val <= max;
+                }
+                case IS_NUMERIC -> {
+                    String val = resolvePin(event, node.getId(), "data_value", ctx, dataCache);
+                    try { Double.parseDouble(val); yield true; } catch (NumberFormatException e) { yield false; }
+                }
+                case IS_EMPTY -> resolvePin(event, node.getId(), "data_value", ctx, dataCache).isEmpty();
+                default -> false;
+            };
+        } catch (NumberFormatException e) {
+            logger.warn("Numeric parse failed in event '" + event.getName() + "' node " + node.getType() + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Action execution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Fires the side effects of an ACTION node. Each action type reads its inputs from wired
+     * data pins (via {@link #resolvePin}) or inline params.
+     * <p>
+     * This method is always called on a virtual thread so that slow I/O (HTTP, file, audio)
+     * never blocks the serial read or graph traversal loops.
+     *
+     * @param event     the event being executed
+     * @param node      the action node
+     * @param nt        the resolved {@link NodeType}
+     * @param ctx       the trigger context
+     * @param dataCache per-execution data pin cache
+     */
+    private void fireAction(DataStore.Event event, DataStore.Event.Node node, NodeType nt,
+                             TriggerContext ctx, Map<String, String> dataCache) {
+        try {
+            switch (nt) {
+                case WEBHOOK -> {
+                    String name = node.getParams() != null ? node.getParams().getOrDefault("webhookName", "") : "";
+                    DataStore.Actions.Webhook wh = storage.getData().getActions().getWebhooks().stream()
+                            .filter(w -> w.getName().equals(name)).findFirst().orElse(null);
+                    if (wh != null) {
+                        DataStore.Actions.Webhook resolved = resolveWebhook(wh, ctx);
+                        HttpHandler.WebhookResult result = HttpHandler.fireWebhook(resolved);
+                        if (result.success()) {
+                            logger.info("Webhook \"" + name + "\" responded " + result.statusCode());
+                        } else {
+                            logger.error("Webhook \"" + name + "\" failed: " +
+                                    (result.error() != null ? result.error() : result.statusCode()));
+                        }
+                    } else {
+                        logger.warn("Webhook not found: " + name);
+                    }
+                }
+                case OPEN_PROGRAM -> {
+                    String name = node.getParams() != null ? node.getParams().getOrDefault("programName", "") : "";
+                    DataStore.Actions.Program prog = storage.getData().getActions().getPrograms().stream()
+                            .filter(p -> p.getName().equals(name)).findFirst().orElse(null);
+                    if (prog != null) {
+                        String path = resolve(prog.getPath(), ctx);
+                        String args = resolve(prog.getArguments(), ctx);
+                        launchProgram(path, args, prog.isRunAsAdmin());
+                        String adminTag = prog.isRunAsAdmin() ? " [admin]" : "";
+                        String argsTag  = (args != null && !args.isBlank()) ? " args=\"" + args + "\"" : "";
+                        logger.info("Launched program: " + name + argsTag + adminTag);
+                    } else {
+                        logger.warn("Program not found: " + name);
+                    }
+                }
+                case OPEN_URL -> {
+                    String url = resolve(resolvePin(event, node.getId(), "data_url", ctx, dataCache), ctx);
+                    if (url != null && !url.isBlank()) {
+                        FoxLib.openURL(url);
+                        logger.info("Opened URL: " + url);
+                    }
+                }
+                case TYPE_TEXT -> {
+                    String text = resolve(resolvePin(event, node.getId(), "data_text", ctx, dataCache), ctx);
+                    typeText(text);
+                }
+                case COPY_TO_CLIPBOARD -> {
+                    String text = resolve(resolvePin(event, node.getId(), "data_text", ctx, dataCache), ctx);
+                    if (text != null && !text.isBlank()) {
+                        StringSelection selection = new StringSelection(text);
+                        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+                        logger.info("Copied to clipboard: " + text);
+                    }
+                }
+                case SHOW_NOTIFICATION -> {
+                    String title = resolve(resolvePin(event, node.getId(), "data_title",   ctx, dataCache), ctx);
+                    String msg   = resolve(resolvePin(event, node.getId(), "data_message", ctx, dataCache), ctx);
+                    showNotification(title, msg);
+                }
+                case WRITE_TO_FILE -> {
+                    String path    = resolve(resolvePin(event, node.getId(), "data_path",    ctx, dataCache), ctx);
+                    String content = resolve(resolvePin(event, node.getId(), "data_content", ctx, dataCache), ctx);
+                    if (path != null && !path.isBlank()) {
+                        Files.writeString(Path.of(path), content != null ? content : "",
+                                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+                        logger.info("Wrote to file: " + path);
+                    }
+                }
+                case APPEND_TO_FILE -> {
+                    String path    = resolve(resolvePin(event, node.getId(), "data_path",    ctx, dataCache), ctx);
+                    String content = resolve(resolvePin(event, node.getId(), "data_content", ctx, dataCache), ctx);
+                    if (path != null && !path.isBlank()) {
+                        Files.writeString(Path.of(path), content != null ? content : "",
+                                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                        logger.info("Appended to file: " + path);
+                    }
+                }
+                case PLAY_SOUND -> {
+                    String path = resolve(resolvePin(event, node.getId(), "data_path", ctx, dataCache), ctx);
+                    playSound(path);
+                }
+                case SET_STATE -> {
+                    String name = resolve(resolvePin(event, node.getId(), "data_name",  ctx, dataCache), ctx);
+                    String val  = resolve(resolvePin(event, node.getId(), "data_value", ctx, dataCache), ctx);
+                    String key  = (name == null || name.isBlank()) ? DEFAULT_STATE : name;
+                    states.put(key, val != null ? val : "");
+                    logger.info("State \"" + key + "\" set to: \"" + val + "\"");
+                }
+                case CLEAR_STATE -> {
+                    String name = resolve(resolvePin(event, node.getId(), "data_name", ctx, dataCache), ctx);
+                    String key  = (name == null || name.isBlank()) ? DEFAULT_STATE : name;
+                    states.remove(key);
+                    logger.info("State \"" + key + "\" cleared");
+                }
+                case SEND_TO_DEVICE -> {
+                    String deviceName = resolve(resolvePin(event, node.getId(), "data_device", ctx, dataCache), ctx);
+                    String text       = resolve(resolvePin(event, node.getId(), "data_text",   ctx, dataCache), ctx);
+                    boolean sent = deviceConnectionManager.sendToDevice(deviceName, text);
+                    if (sent) {
+                        logger.info("Sent to device \"" + deviceName + "\": " + text);
+                    } else {
+                        logger.error("Send to Device: device \"" + deviceName + "\" is not connected or not found.");
+                    }
+                }
+                case SEND_WEBSOCKET -> {
+                    String channel = resolve(resolvePin(event, node.getId(), "data_channel", ctx, dataCache), ctx);
+                    String msg     = resolve(resolvePin(event, node.getId(), "data_message", ctx, dataCache), ctx);
+                    fi.natroutter.baudbound.websocket.WebSocketHandler handler = BaudBound.getWebSocketHandler();
+                    if (handler == null || !handler.isRunning()) {
+                        logger.warn("Send WebSocket: server is not running.");
+                    } else if (channel != null && !channel.isBlank()) {
+                        handler.sendToChannel(channel, msg);
+                        logger.info("WebSocket sent to channel \"" + channel + "\": \"" + msg + "\"");
+                    } else {
+                        ctx.reply(msg);
+                        logger.info("WebSocket reply sent: \"" + msg + "\"");
+                    }
+                }
+                case RUN_COMMAND -> {
+                    String cmd = resolve(resolvePin(event, node.getId(), "data_command", ctx, dataCache), ctx);
+                    runCommand(cmd);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Action error in event '" + event.getName() + "': " + e.getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Node graph helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Finds a node by ID within the given event's node list.
+     *
+     * @param event  the event to search
+     * @param nodeId the node ID to look up
+     * @return the matching {@link DataStore.Event.Node}, or {@code null} if not found
+     */
+    private DataStore.Event.Node findNode(DataStore.Event event, String nodeId) {
+        if (event.getNodes() == null) return null;
+        return event.getNodes().stream()
+                .filter(n -> n.getId().equals(nodeId))
+                .findFirst().orElse(null);
+    }
+
+    // -------------------------------------------------------------------------
+    // Private action helpers
+    // -------------------------------------------------------------------------
 
     /**
      * Launches an external program directly without going through event processing or storage lookup.
@@ -446,11 +576,10 @@ public class EventHandler {
     }
 
     /**
-     * Executes {@code command} in the OS shell after resolving variable substitutions.
+     * Executes {@code command} in the OS shell.
      * Uses {@code cmd.exe /c} on Windows and {@code sh -c} on all other platforms.
      */
-    private void runCommand(String command, TriggerContext context, String eventName) throws IOException {
-        command = resolve(command, context, eventName);
+    private void runCommand(String command) throws IOException {
         if (command == null || command.isBlank()) return;
         ProcessBuilder pb = isWindows()
                 ? new ProcessBuilder("cmd.exe", "/c", command)
@@ -463,8 +592,10 @@ public class EventHandler {
         return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
 
-    private void typeText(String text, TriggerContext context, String eventName) throws AWTException {
-        text = resolve(text, context, eventName);
+    /**
+     * Types {@code text} by placing it on the clipboard then simulating Ctrl+V.
+     */
+    private void typeText(String text) throws AWTException {
         if (text == null || text.isBlank()) return;
 
         StringSelection selection = new StringSelection(text);
@@ -480,65 +611,23 @@ public class EventHandler {
         logger.info("Typed text: " + text);
     }
 
-    private void copyToClipboard(String text, TriggerContext context, String eventName) {
-        text = resolve(text, context, eventName);
-        if (text == null || text.isBlank()) return;
-        StringSelection selection = new StringSelection(text);
-        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
-        logger.info("Copied to clipboard: " + text);
+    /**
+     * Shows a system tray notification. If {@code title} or {@code msg} is blank the call is a no-op.
+     *
+     * @param title the notification title
+     * @param msg   the notification body
+     */
+    private void showNotification(String title, String msg) {
+        if (msg == null || msg.isBlank()) return;
+        String effectiveTitle = (title != null && !title.isBlank()) ? title : BaudBound.APP_NAME;
+        BaudBound.showNotification(effectiveTitle, msg, TrayIcon.MessageType.INFO);
+        logger.info("Showed notification: " + msg);
     }
 
     /**
-     * Value format: "message" or "TYPE|message"
-     * TYPE is one of: INFO (default), WARNING, ERROR, NONE
-     * Example: WARNING|Sensor value out of range: {input}
+     * Plays the audio file at {@code filePath}, or falls back to the system beep when the path is
+     * blank or the file does not exist.
      */
-    private void showNotification(String value, TriggerContext context, String eventName) {
-        if (value == null || value.isBlank()) return;
-        String[] parts = value.split("\\|", 2);
-        TrayIcon.MessageType type = TrayIcon.MessageType.INFO;
-        String message;
-        if (parts.length == 2) {
-            try { type = TrayIcon.MessageType.valueOf(parts[0].trim().toUpperCase()); }
-            catch (IllegalArgumentException ignored) {}
-            message = resolve(parts[1], context, eventName);
-        } else {
-            message = resolve(parts[0], context, eventName);
-        }
-        if (message == null || message.isBlank()) return;
-        BaudBound.showNotification(BaudBound.APP_NAME, message, type);
-        logger.info("Showed notification [" + type + "]: " + message);
-    }
-
-    /**
-     * Value format: "path" or "path|content template"
-     * If no content template is provided, defaults to "{timestamp}: {input}".
-     * Both path and content support all variable substitutions.
-     * Overwrites the file on each call.
-     */
-    private void writeToFile(String value, TriggerContext context, String eventName) throws IOException {
-        if (value == null || value.isBlank()) return;
-        String[] parts = value.split("\\|", 2);
-        String filePath = resolve(parts[0].trim(), context, eventName);
-        String contentTemplate = parts.length == 2 ? parts[1] : "{timestamp}: {input}";
-        String content = resolve(contentTemplate, context, eventName) + System.lineSeparator();
-        Files.writeString(Path.of(filePath), content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        logger.info("Wrote to file: " + filePath);
-    }
-
-    /**
-     * Same format as writeToFile but appends instead of overwriting.
-     */
-    private void appendToFile(String value, TriggerContext context, String eventName) throws IOException {
-        if (value == null || value.isBlank()) return;
-        String[] parts = value.split("\\|", 2);
-        String filePath = resolve(parts[0].trim(), context, eventName);
-        String contentTemplate = parts.length == 2 ? parts[1] : "{timestamp}: {input}";
-        String content = resolve(contentTemplate, context, eventName) + System.lineSeparator();
-        Files.writeString(Path.of(filePath), content, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        logger.info("Appended to file: " + filePath);
-    }
-
     private void playSound(String filePath) throws Exception {
         if (filePath == null || filePath.isBlank()) {
             Toolkit.getDefaultToolkit().beep();
@@ -564,105 +653,6 @@ public class EventHandler {
         logger.info("Playing sound: " + filePath);
     }
 
-    /**
-     * Value format: {@code "deviceName|data"}.
-     * Resolves all variable tokens in the data portion before sending.
-     */
-    private void sendToDevice(String value, TriggerContext context, String eventName) {
-        if (value == null || value.isBlank()) return;
-        String[] parts = value.split("\\|", 2);
-        if (parts.length < 2) {
-            logger.error("Send to Device: value must be 'deviceName|data'.");
-            return;
-        }
-        String deviceName = parts[0].trim();
-        String data = resolve(parts[1], context, eventName);
-        boolean sent = deviceConnectionManager.sendToDevice(deviceName, data);
-        if (sent) {
-            logger.info("Sent to device \"" + deviceName + "\": " + data);
-        } else {
-            logger.error("Send to Device: device \"" + deviceName + "\" is not connected or not found.");
-        }
-    }
-
-    /**
-     * Sends a WebSocket message. Value format: {@code "targetChannel|message"} or just
-     * {@code "message"} to reply on the trigger's own channel.
-     */
-    private void sendWebSocket(String value, TriggerContext context, String eventName) {
-        if (value == null || value.isBlank()) {
-            logger.warn("Send WebSocket: message is empty — skipping.");
-            return;
-        }
-        String channel = context.channel() != null ? context.channel() : "";
-        String[] parts = value.split("\\|", 2);
-        if (parts.length == 2) {
-            String targetChannel = resolve(parts[0].trim(), context, eventName);
-            String message       = resolve(parts[1], context, eventName);
-            fi.natroutter.baudbound.websocket.WebSocketHandler handler = BaudBound.getWebSocketHandler();
-            if (handler == null || !handler.isRunning()) {
-                logger.warn("Send WebSocket: server is not running.");
-                return;
-            }
-            handler.sendToChannel(targetChannel, message);
-            logger.info("WebSocket sent to channel \"" + targetChannel + "\": \"" + message + "\"");
-        } else {
-            String message = resolve(value, context, eventName);
-            context.reply(message);
-            logger.info("WebSocket reply sent on channel \"" + (channel.isBlank() ? "/" : channel) + "\": \"" + message + "\"");
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Condition helpers
-    // -------------------------------------------------------------------------
-
-    /**
-     * Parses a URL-style query string ({@code key=value&key2=value2}) into a map.
-     * Keys and values are trimmed. Parameters without {@code =} are stored with an empty value.
-     */
-    private Map<String, String> parseWsParams(String input) {
-        Map<String, String> params = new LinkedHashMap<>();
-        for (String part : input.split("&")) {
-            String[] kv = part.split("=", 2);
-            if (kv.length == 2) {
-                params.put(kv[0].trim(), kv[1].trim());
-            } else if (kv.length == 1 && !kv[0].isBlank()) {
-                params.put(kv[0].trim(), "");
-            }
-        }
-        return params;
-    }
-
-    private boolean isNumeric(String input) {
-        try { Double.parseDouble(input.trim()); return true; }
-        catch (NumberFormatException e) { return false; }
-    }
-
-    /** Returns Double.compare(input, value), or 0 if either is non-numeric. */
-    private int compareNumeric(String input, String value) {
-        try {
-            return Double.compare(Double.parseDouble(input.trim()), Double.parseDouble(value.trim()));
-        } catch (NumberFormatException e) { return 0; }
-    }
-
-    /** value format: "min,max" (inclusive on both ends) */
-    private boolean isBetween(String input, String value) {
-        String[] parts = value.split(",", 2);
-        if (parts.length != 2) return false;
-        try {
-            double val = Double.parseDouble(input.trim());
-            double min = Double.parseDouble(parts[0].trim());
-            double max = Double.parseDouble(parts[1].trim());
-            return val >= min && val <= max;
-        } catch (NumberFormatException e) { return false; }
-    }
-
-    private boolean parseLengthEquals(String input, String value) {
-        try { return input.length() == Integer.parseInt(value.trim()); }
-        catch (NumberFormatException e) { return false; }
-    }
-
     // -------------------------------------------------------------------------
     // Variable substitution
     // -------------------------------------------------------------------------
@@ -680,23 +670,22 @@ public class EventHandler {
      *   <li><b>Date/time:</b> {@code {timestamp}}, {@code {timestamp.unix}}, {@code {date}},
      *       {@code {time}}, {@code {year}}, {@code {month}}, {@code {day}},
      *       {@code {hour}}, {@code {minute}}, {@code {second}}</li>
-     *   <li><b>Trigger:</b> {@code {source}}, {@code {channel}}, {@code {event}}</li>
+     *   <li><b>Trigger:</b> {@code {source}}, {@code {channel}}</li>
      *   <li><b>Device:</b> {@code {device}}, {@code {device.port}}, {@code {device.baud}}</li>
      *   <li><b>States:</b> {@code {state}}, {@code {state[name]}}</li>
      *   <li><b>System:</b> {@code {hostname}}, {@code {username}}, {@code {env[VAR]}},
      *       {@code {uuid}}, {@code {random[min,max]}}</li>
      * </ul>
      *
-     * @param template  the template string; may be {@code null}
-     * @param context   the trigger context carrying input, device, source, and channel
-     * @param eventName the name of the event that fired
+     * @param template the template string; may be {@code null}
+     * @param ctx      the trigger context carrying input, device, source, and channel
      * @return the resolved string, or {@code null} if {@code template} is {@code null}
      */
-    private String resolve(String template, TriggerContext context, String eventName) {
+    private String resolve(String template, TriggerContext ctx) {
         if (template == null) return null;
-        String input   = context.input();
-        String channel = context.channel() != null ? context.channel() : "";
-        DataStore.Device device = context.device();
+        String input   = ctx.input();
+        String channel = ctx.channel() != null ? ctx.channel() : "";
+        DataStore.Device device = ctx.device();
 
         String result = template;
 
@@ -729,9 +718,8 @@ public class EventHandler {
 
         // ---- Trigger / event ----
         result = result
-                .replace("{source}",  context.source().name())
-                .replace("{channel}", channel)
-                .replace("{event}",   eventName != null ? eventName : "");
+                .replace("{source}",  ctx.source().name())
+                .replace("{channel}", channel);
 
         // ---- Device (empty string when no device context) ----
         String devName = device != null && device.getName() != null ? device.getName() : "";
@@ -811,27 +799,36 @@ public class EventHandler {
         catch (Exception e) { return ""; }
     }
 
-    private DataStore.Actions.Webhook resolveWebhook(DataStore.Actions.Webhook original, TriggerContext context, String eventName) {
-        String input = context.input();
+    /**
+     * Builds a fully resolved copy of {@code original} with all variable tokens substituted.
+     * When {@link DataStore.Actions.Webhook#isUrlEscape()} is {@code true}, the {@code {input}}
+     * token is URL-encoded before insertion into the URL, headers, and body.
+     *
+     * @param original the webhook definition to resolve
+     * @param ctx      the trigger context
+     * @return a new {@link DataStore.Actions.Webhook} with all templates resolved
+     */
+    private DataStore.Actions.Webhook resolveWebhook(DataStore.Actions.Webhook original, TriggerContext ctx) {
+        String input = ctx.input();
         String resolvedInput = original.isUrlEscape()
                 ? URLEncoder.encode(input, StandardCharsets.UTF_8)
                 : input;
 
         TriggerContext resolveCtx = original.isUrlEscape()
-                ? new TriggerContext(resolvedInput, context.device(), context.source(), context.channel(), context.connection())
-                : context;
+                ? new TriggerContext(resolvedInput, ctx.device(), ctx.source(), ctx.channel(), ctx.connection())
+                : ctx;
 
         List<DataStore.Actions.Webhook.Header> resolvedHeaders = original.getHeaders() == null ? List.of() :
                 original.getHeaders().stream()
-                        .map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), resolve(h.getValue(), resolveCtx, eventName)))
+                        .map(h -> new DataStore.Actions.Webhook.Header(h.getKey(), resolve(h.getValue(), resolveCtx)))
                         .toList();
 
         return new DataStore.Actions.Webhook(
                 original.getName(),
-                resolve(original.getUrl(), resolveCtx, eventName),
+                resolve(original.getUrl(), resolveCtx),
                 original.getMethod(),
                 resolvedHeaders,
-                resolve(original.getBody(), resolveCtx, eventName),
+                resolve(original.getBody(), resolveCtx),
                 original.isUrlEscape()
         );
     }
