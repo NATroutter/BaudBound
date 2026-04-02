@@ -270,17 +270,18 @@ public class NodeEditorCanvas {
         boolean isExec = pin.kind() == NodeType.PinKind.EXEC;
         int color = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
 
+        // Output pins: label left, circle right so wires exit from the right side
+        if (!isExec) {
+            ImGui.text(friendlyPinName(pin.id()));
+            ImGui.sameLine();
+        }
+
         NodeEditor.beginPin(pid, NodeEditorPinKind.Output);
         ImVec2 cp = ImGui.getCursorScreenPos();
         ImGui.dummy(PIN_SIZE, PIN_SIZE);
         ImGui.getWindowDrawList().addCircleFilled(
                 cp.x + PIN_SIZE * 0.5f, cp.y + PIN_SIZE * 0.5f, PIN_RADIUS, color);
         NodeEditor.endPin();
-
-        if (!isExec) {
-            ImGui.sameLine();
-            ImGui.text(friendlyPinName(pin.id()));
-        }
     }
 
     // =========================================================================
