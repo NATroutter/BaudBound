@@ -98,9 +98,10 @@ public class NodeEditorCanvas {
         float  cx = canvasPos.x, cy = canvasPos.y;
         float  cw = canvasSize.x, ch = canvasSize.y;
 
-        // Invisible button to capture mouse events on the canvas
-        ImGui.invisibleButton("##canvas", cw, ch);
-        boolean canvasHovered = ImGui.isItemHovered();
+        // Check canvas hover manually so text field widgets rendered inside are not blocked.
+        ImVec2 mouse = ImGui.getMousePos();
+        boolean canvasHovered = mouse.x >= cx && mouse.x <= cx + cw
+                             && mouse.y >= cy && mouse.y <= cy + ch;
 
         ImDrawList dl = ImGui.getWindowDrawList();
 
