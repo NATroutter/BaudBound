@@ -9,7 +9,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Root JSON model for all persisted application state.
@@ -284,20 +286,34 @@ public class DataStore {
         @SerializedName("name")
         private String name;
 
+        /** @deprecated Migrated to {@link #nodes} and {@link #connections} on load. */
+        @Deprecated
         @SerializedName("conditions")
         private List<Condition> conditions = new ArrayList<>();
 
+        /** @deprecated Migrated to {@link #nodes} and {@link #connections} on load. */
+        @Deprecated
         @SerializedName("actions")
         private List<Action> actions = new ArrayList<>();
 
         /**
+         * @deprecated Migrated to trigger {@link Node} entries in {@link #nodes} on load.
+         * Use {@link #getEffectiveTriggerSources()} only for migration; do not rely on this in new code.
+         * <p>
          * Which trigger sources may fire this event. Stored as a list of
          * {@link TriggerSource#name()} strings. When {@code null} or empty,
          * {@link #getEffectiveTriggerSources()} returns {@code ["SERIAL"]} for
          * backward compatibility with configs written before this field existed.
          */
+        @Deprecated
         @SerializedName("trigger_sources")
         private List<String> triggerSources;
+
+        @SerializedName("nodes")
+        private List<Node> nodes = new ArrayList<>();
+
+        @SerializedName("connections")
+        private List<Connection> connections = new ArrayList<>();
 
         /**
          * Returns the configured trigger sources, defaulting to {@code ["SERIAL"]} when
@@ -326,13 +342,32 @@ public class DataStore {
 
         }
 
-        /** Returns a fully independent deep copy of this event (no shared list or condition/action references). */
+        /** Returns a fully independent deep copy of this event (no shared list or condition/action/node/connection references). */
         public Event deepCopy() {
             List<Condition> conditionsCopy = conditions == null ? new ArrayList<>() :
                     conditions.stream().map(c -> new Condition(c.getType(), c.getValue(), c.isCaseSensitive())).toList();
             List<Action> actionsCopy = actions == null ? new ArrayList<>() :
                     actions.stream().map(a -> new Action(a.getType(), a.getValue())).toList();
-            return new Event(name, conditionsCopy, actionsCopy, new ArrayList<>(getEffectiveTriggerSources()));
+            List<Node> nodesCopy = nodes == null ? new ArrayList<>() :
+                    nodes.stream().map(n -> {
+                        Node copy = new Node();
+                        copy.setId(n.getId());
+                        copy.setType(n.getType());
+                        copy.setX(n.getX());
+                        copy.setY(n.getY());
+                        copy.setParams(n.getParams() == null ? new HashMap<>() : new HashMap<>(n.getParams()));
+                        return copy;
+                    }).toList();
+            List<Connection> connectionsCopy = connections == null ? new ArrayList<>() :
+                    connections.stream().map(c -> new Connection(c.getFromNodeId(), c.getFromPin(), c.getToNodeId(), c.getToPin())).toList();
+            Event copy = new Event();
+            copy.setName(name);
+            copy.setConditions(conditionsCopy);
+            copy.setActions(actionsCopy);
+            copy.setTriggerSources(new ArrayList<>(getEffectiveTriggerSources()));
+            copy.setNodes(nodesCopy);
+            copy.setConnections(connectionsCopy);
+            return copy;
         }
 
         @Data
@@ -345,6 +380,61 @@ public class DataStore {
 
             @SerializedName("value")
             private String value;
+
+        }
+
+        /**
+         * A single node in the event's node graph. Each node has a stable UUID {@link #id},
+         * a {@link fi.natroutter.baudbound.nodes.NodeType} name stored as {@link #type}, canvas position ({@link #x}, {@link #y}),
+         * and a {@link #params} map for inline values on unconnected input pins.
+         */
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class Node {
+
+            @SerializedName("id")
+            private String id;
+
+            @SerializedName("type")
+            private String type;
+
+            @SerializedName("x")
+            private float x;
+
+            @SerializedName("y")
+            private float y;
+
+            /**
+             * Inline values for unconnected input pins. Key is the pin ID (e.g. {@code "data_b"});
+             * value is the literal string. Substitution tokens ({@code {input}}, {@code {timestamp}})
+             * work here just as they do in action values.
+             */
+            @SerializedName("params")
+            private Map<String, String> params = new HashMap<>();
+
+        }
+
+        /**
+         * A directed connection between two pins in the event's node graph.
+         * EXEC connections carry execution flow; STRING connections carry data.
+         */
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class Connection {
+
+            @SerializedName("from_node_id")
+            private String fromNodeId;
+
+            @SerializedName("from_pin")
+            private String fromPin;
+
+            @SerializedName("to_node_id")
+            private String toNodeId;
+
+            @SerializedName("to_pin")
+            private String toPin;
 
         }
 
