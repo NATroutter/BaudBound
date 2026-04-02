@@ -3,145 +3,128 @@ package fi.natroutter.baudbound.gui;
 import fi.natroutter.baudbound.enums.NodeType;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
-import imgui.ImDrawList;
 import imgui.ImGui;
 import imgui.ImVec2;
-import imgui.flag.ImGuiMouseButton;
+import imgui.extension.nodeditor.NodeEditor;
+import imgui.extension.nodeditor.NodeEditorContext;
+import imgui.extension.nodeditor.flag.NodeEditorPinKind;
+import imgui.extension.nodeditor.flag.NodeEditorStyleColor;
+import imgui.flag.ImGuiCol;
+import imgui.type.ImLong;
 import imgui.type.ImString;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * An ImGui draw-list canvas that renders the node graph for a {@link DataStore.Event}.
+ * Node graph editor canvas backed by {@code imgui.extension.nodeditor.NodeEditor}
+ * (imgui-node-editor by thedmd).
  *
- * <p>Handles all visual rendering (nodes, wires, grid) and interactions (pan, zoom,
- * drag, connect, delete). Modifies the event's {@code nodes} and {@code connections}
- * lists in-place and calls {@link StorageProvider#save()} after structural changes.
+ * <p>The extension handles pan, zoom, grid, bezier wires, drag-to-connect, and
+ * selection/deletion. This class is responsible only for placing node and pin
+ * content using standard ImGui widgets inside the extension's begin/end calls.
+ *
+ * <p>ID mapping: because NodeEditor uses {@code long} IDs we maintain a stable
+ * {@link #idMap} from string keys to sequentially-assigned longs.
+ * Keys use the format {@code "n:<uuid>"} for nodes, {@code "p:<uuid>:<pinId>"}
+ * for pins, and {@code "l:<fromNodeId>:<fromPin>:<toNodeId>:<toPin>"} for links.
  *
  * <p>Must be called from the GLFW main thread each frame via {@link #render}.
+ * Call {@link #dispose()} when the owning dialog is permanently torn down.
  */
 public class NodeEditorCanvas {
 
-    // Pan/zoom
-    private float panX = 0f, panY = 0f;
-    private float zoom = 1.0f;
+    private NodeEditorContext context;
 
-    // Interaction
-    private String dragNodeId = null;
-    private float  dragStartMouseX, dragStartMouseY;
-    private float  dragStartNodeX,  dragStartNodeY;
+    /**
+     * Stable string-key → long ID registry used by NodeEditor.
+     * Key formats: {@code "n:<uuid>"}, {@code "p:<uuid>:<pinId>"},
+     * {@code "l:<fromNodeId>:<fromPin>:<toNodeId>:<toPin>"}
+     */
+    private final Map<String, Long> idMap = new HashMap<>();
+    /** Reverse lookup: pin long ID → {@code [nodeUuid, pinId]}. */
+    private final Map<Long, String[]> pinLookup = new HashMap<>();
+    /** Reverse lookup: link long ID → {@code "fromNodeId:fromPin:toNodeId:toPin"}. */
+    private final Map<Long, String> linkLookup = new HashMap<>();
+    /** Reverse lookup: node long ID → nodeUuid. */
+    private final Map<Long, String> nodeLookup = new HashMap<>();
 
-    private String selectedNodeId = null;
+    private long nextId = 1L;
 
-    // Pending wire: started from an output pin
-    private String pendingFromNodeId = null;
-    private String pendingFromPin    = null;
-    private float  pendingFromScreenX, pendingFromScreenY;
+    /** Node IDs that have already had {@link NodeEditor#setNodePosition} applied. */
+    private final Set<Long> initializedPositions = new HashSet<>();
 
-    // Per-frame maps rebuilt each render()
-    // key: "nodeId:pinId"  value: [screenX, screenY]
-    private final Map<String, float[]> pinScreenPos = new HashMap<>();
-    // key: nodeId  value: [screenX, screenY, w, h]
-    private final Map<String, float[]> nodeScreenBounds = new HashMap<>();
-    // key: nodeId  value: [headerScreenX, headerScreenY, w, headerH]
-    private final Map<String, float[]> nodeHeaderBounds = new HashMap<>();
+    /** When {@code true}, {@link NodeEditor#navigateToContent()} is called at end of next frame. */
+    private boolean pendingNavigate = false;
 
-    // -------------------------------------------------------------------------
-    // Constants
-    // -------------------------------------------------------------------------
+    // ---- Layout constants ----
+    /** Side length of the invisible dummy widget used as a pin hit-target. */
+    private static final float PIN_SIZE   = 12f;
+    /** Radius of the drawn pin circle. */
+    private static final float PIN_RADIUS = 5f;
+    /**
+     * Minimum content width used as a floor for {@link ImGui#getContentRegionAvail()}.x
+     * when right-aligning output pins on the first frame before node size is known.
+     */
+    private static final float NODE_MIN_W = 180f;
 
-    private static final float NODE_WIDTH   = 240f;
-    private static final float HEADER_H     = 24f;
-    private static final float PIN_ROW_H    = 20f;
-    private static final float PIN_LABEL_H  = 14f;   // label row above a text field
-    private static final float PIN_FIELD_H  = 22f;   // text field row height
-    private static final float PIN_RADIUS   = 5f;
-    private static final float PIN_MARGIN_X = 12f;   // distance from node edge to pin centre
+    // ---- Pin / icon colors (ABGR packed ints for ImDrawList) ----
+    private static final int COL_PIN_EXEC   = 0xFFFFFFFF;
+    private static final int COL_PIN_STRING = 0xFFB060FF;
 
-    // Colors (ABGR packed ints)
-    private static final int COL_NODE_BG      = 0xFF1E2A30;
-    private static final int COL_NODE_BORDER  = 0xFF3A4A52;
-    private static final int COL_NODE_SEL     = 0xFF60A0F0;
-    private static final int COL_HDR_TRIGGER  = 0xFF6045E9;
-    private static final int COL_HDR_COND     = 0xFF80DE4A;
-    private static final int COL_HDR_ACTION   = 0xFFF0A560;
-    private static final int COL_HDR_VALUE    = 0xFF15CCFA;
-    private static final int COL_PIN_EXEC     = 0xFFFFFFFF;
-    private static final int COL_PIN_STRING   = 0xFFB060FF;
-    private static final int COL_WIRE_EXEC    = 0xFFFFFFFF;
-    private static final int COL_WIRE_STRING  = 0xFFB060FF;
-    private static final int COL_TEXT         = 0xFFDDDDDD;
-    private static final int COL_LABEL        = 0xFF999999;   // dim label above text fields
-    private static final int COL_GRID         = 0x22FFFFFF;
-    private static final int COL_GRID_MAJOR   = 0x33FFFFFF;
-
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Public API
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     /**
      * Renders the node canvas for the given event. Must be called every frame from the GLFW thread.
-     * Modifies {@code event.nodes} and {@code event.connections} in-place.
      *
-     * @param event   the event being edited
-     * @param storage used to call save() after structural changes
+     * @param event   the event being edited (working copy; modified in-place)
+     * @param storage used to persist structural changes (link/node create/delete)
      */
     public void render(DataStore.Event event, StorageProvider storage) {
-        pinScreenPos.clear();
-        nodeScreenBounds.clear();
-        nodeHeaderBounds.clear();
+        ensureContext();
+        NodeEditor.setCurrentEditor(context);
+        NodeEditor.begin("##ne");
 
-        ImVec2 canvasPos  = ImGui.getCursorScreenPos();
-        ImVec2 canvasSize = ImGui.getContentRegionAvail();
-        float  cx = canvasPos.x, cy = canvasPos.y;
-        float  cw = canvasSize.x, ch = canvasSize.y;
-
-        // Check canvas hover manually so text field widgets rendered inside are not blocked.
-        ImVec2 mouse = ImGui.getMousePos();
-        boolean canvasHovered = mouse.x >= cx && mouse.x <= cx + cw
-                             && mouse.y >= cy && mouse.y <= cy + ch;
-
-        ImDrawList dl = ImGui.getWindowDrawList();
-
-        // Clip to canvas region
-        dl.pushClipRect(cx, cy, cx + cw, cy + ch, true);
-
-        // Background
-        dl.addRectFilled(cx, cy, cx + cw, cy + ch, 0xFF111820);
-
-        // Grid
-        drawGrid(dl, cx, cy, cw, ch);
-
-        // Nodes
         if (event.getNodes() != null) {
             for (DataStore.Event.Node node : event.getNodes()) {
-                renderNode(dl, event, node, cx, cy);
+                renderNode(event, node);
             }
         }
 
-        // Wires
         if (event.getConnections() != null) {
-            renderWires(dl, event);
+            for (DataStore.Event.Connection conn : event.getConnections()) {
+                long lid  = linkId(conn);
+                long from = pinId(conn.getFromNodeId(), conn.getFromPin());
+                long to   = pinId(conn.getToNodeId(),   conn.getToPin());
+                NodeEditor.link(lid, from, to);
+            }
         }
 
-        // Pending wire being dragged
-        if (pendingFromNodeId != null) {
-            drawBezier(dl, pendingFromScreenX, pendingFromScreenY,
-                       mouse.x, mouse.y, COL_WIRE_EXEC, 2f);
+        handleCreate(event, storage);
+        handleDelete(event, storage);
+
+        if (pendingNavigate) {
+            NodeEditor.navigateToContent();
+            pendingNavigate = false;
         }
 
-        dl.popClipRect();
+        NodeEditor.end();
 
-        // Handle interactions
-        handleInteractions(event, storage, cx, cy, cw, ch, canvasHovered);
+        // Sync canvas positions back into the DataStore working copy each frame.
+        // Actual persistence to disk happens when the event editor saves the event.
+        syncPositions(event);
+
+        NodeEditor.setCurrentEditor(null);
     }
 
     /**
-     * Spawns a new node of the given type at the current canvas center.
+     * Spawns a new node of the given type at a staggered position near the canvas origin.
      *
      * @param event    the event to add the node to
      * @param storage  used to persist after adding
@@ -151,9 +134,9 @@ public class NodeEditorCanvas {
         DataStore.Event.Node node = new DataStore.Event.Node();
         node.setId(UUID.randomUUID().toString());
         node.setType(nodeType);
-        // Place near canvas center (rough estimate using current pan/zoom)
-        node.setX((-panX + 300f) / zoom);
-        node.setY((-panY + 200f) / zoom);
+        int count = event.getNodes() == null ? 0 : event.getNodes().size();
+        node.setX(80f + count * 20f);
+        node.setY(80f + count * 20f);
         node.setParams(new HashMap<>());
         if (event.getNodes() == null || !(event.getNodes() instanceof ArrayList)) {
             event.setNodes(event.getNodes() == null ? new ArrayList<>() : new ArrayList<>(event.getNodes()));
@@ -163,147 +146,333 @@ public class NodeEditorCanvas {
     }
 
     /**
-     * Resets pan and zoom to their default values (pan = 0,0 ; zoom = 1.0).
+     * Clears the initialized-position set so that stored positions are re-applied to NodeEditor
+     * on the next render, then requests a {@link NodeEditor#navigateToContent()} so the view
+     * is centered on the graph.
      */
     public void resetView() {
-        panX = 0f; panY = 0f; zoom = 1.0f;
+        initializedPositions.clear();
+        pendingNavigate = true;
     }
 
-    // -------------------------------------------------------------------------
-    // Rendering helpers
-    // -------------------------------------------------------------------------
-
-    private void drawGrid(ImDrawList dl, float cx, float cy, float cw, float ch) {
-        float spacing = 20f * zoom;
-        float offsetX = (panX % spacing + spacing) % spacing;
-        float offsetY = (panY % spacing + spacing) % spacing;
-
-        float majorSpacing = spacing * 5f;
-        float majorOffsetX = (panX % majorSpacing + majorSpacing) % majorSpacing;
-        float majorOffsetY = (panY % majorSpacing + majorSpacing) % majorSpacing;
-
-        for (float x = cx + offsetX; x < cx + cw; x += spacing) {
-            int col = (Math.abs(x - cx - majorOffsetX) < 1f) ? COL_GRID_MAJOR : COL_GRID;
-            dl.addLine(x, cy, x, cy + ch, col, 1f);
-        }
-        for (float y = cy + offsetY; y < cy + ch; y += spacing) {
-            int col = (Math.abs(y - cy - majorOffsetY) < 1f) ? COL_GRID_MAJOR : COL_GRID;
-            dl.addLine(cx, y, cx + cw, y, col, 1f);
+    /**
+     * Destroys the underlying NodeEditor context. Should be called when the owning dialog is
+     * permanently torn down (e.g. application shutdown).
+     */
+    public void dispose() {
+        if (context != null) {
+            NodeEditor.destroyEditor(context);
+            context = null;
         }
     }
 
-    private void renderNode(ImDrawList dl, DataStore.Event event,
-                             DataStore.Event.Node node, float cx, float cy) {
+    // =========================================================================
+    // Node rendering
+    // =========================================================================
+
+    private void renderNode(DataStore.Event event, DataStore.Event.Node node) {
         NodeType nt = NodeType.getByName(node.getType());
         if (nt == null) return;
 
-        List<NodeType.PinDef> inputs  = nt.inputPins();
-        List<NodeType.PinDef> outputs = nt.outputPins();
+        long nid = nodeId(node.getId());
 
-        // Calculate per-input-row height: STRING pins without a wire get label+field rows
-        float[] inputRowH = new float[inputs.size()];
-        for (int i = 0; i < inputs.size(); i++) {
-            NodeType.PinDef pin = inputs.get(i);
-            boolean hasField = pin.kind() == NodeType.PinKind.STRING
-                    && !isConnectedInput(event, node.getId(), pin.id());
-            inputRowH[i] = hasField ? (PIN_LABEL_H + PIN_FIELD_H) : PIN_ROW_H;
+        // Apply stored position once per session (NodeEditor tracks subsequent drags itself).
+        if (!initializedPositions.contains(nid)) {
+            NodeEditor.setNodePosition(nid, node.getX(), node.getY());
+            initializedPositions.add(nid);
         }
-        float inputBodyH = 0; for (float h : inputRowH) inputBodyH += h;
-        float outputBodyH = outputs.size() * PIN_ROW_H;
-        float nodeH = HEADER_H + Math.max(inputBodyH, outputBodyH) + 8f;
 
-        float sx = cx + node.getX() * zoom + panX;
-        float sy = cy + node.getY() * zoom + panY;
-        float sw = NODE_WIDTH * zoom;
-        float sh = nodeH * zoom;
+        // Push per-category background and border colors.
+        float[] bg     = categoryBg(nt.getCategory());
+        float[] border = categoryBorder(nt.getCategory());
+        NodeEditor.pushStyleColor(NodeEditorStyleColor.NodeBg,     bg[0],     bg[1],     bg[2],     bg[3]);
+        NodeEditor.pushStyleColor(NodeEditorStyleColor.NodeBorder, border[0], border[1], border[2], border[3]);
 
-        nodeScreenBounds.put(node.getId(), new float[]{sx, sy, sw, sh});
-        nodeHeaderBounds.put(node.getId(), new float[]{sx, sy, sw, HEADER_H * zoom});
+        NodeEditor.beginNode(nid);
+        ImGui.pushID(node.getId());
 
-        boolean selected = node.getId().equals(selectedNodeId);
+        // Title row: colored per category
+        float[] tc = categoryTitleColor(nt.getCategory());
+        ImGui.pushStyleColor(ImGuiCol.Text, tc[0], tc[1], tc[2], tc[3]);
+        ImGui.text(nt.getFriendlyName());
+        ImGui.popStyleColor();
 
-        // Body
-        dl.addRectFilled(sx, sy, sx + sw, sy + sh, COL_NODE_BG, 4f);
+        // Guarantee a minimum node width so output pins have room to right-align.
+        if (ImGui.getItemRectSize().x < NODE_MIN_W) {
+            ImGui.sameLine();
+            ImGui.dummy(NODE_MIN_W - ImGui.getItemRectSize().x, 1f);
+        }
+        ImGui.separator();
 
-        // Header
-        int hdrColor = switch (nt.getCategory()) {
-            case TRIGGER   -> COL_HDR_TRIGGER;
-            case CONDITION -> COL_HDR_COND;
-            case ACTION    -> COL_HDR_ACTION;
-            case VALUE     -> COL_HDR_VALUE;
-        };
-        dl.addRectFilled(sx, sy, sx + sw, sy + HEADER_H * zoom, hdrColor, 4f);
-        dl.addText(sx + 6f * zoom, sy + 5f * zoom, COL_TEXT, nt.getFriendlyName());
+        // Input pins (left side: circle + label / text field)
+        for (NodeType.PinDef pin : nt.inputPins()) {
+            renderInputPin(event, node, pin);
+        }
 
-        // Border
-        int borderCol = selected ? COL_NODE_SEL : COL_NODE_BORDER;
-        dl.addRect(sx, sy, sx + sw, sy + sh, borderCol, 4f, 1.5f);
+        // Output pins (right side: label + circle)
+        for (NodeType.PinDef pin : nt.outputPins()) {
+            renderOutputPin(node, pin);
+        }
 
-        float pinAreaY = sy + HEADER_H * zoom + 4f * zoom;
+        ImGui.popID();
+        NodeEditor.endNode();
+        NodeEditor.popStyleColor(2);
+    }
 
-        // --- Input pins (left side) ---
-        float curY = pinAreaY;
-        for (int i = 0; i < inputs.size(); i++) {
-            NodeType.PinDef pin = inputs.get(i);
-            float rowH = inputRowH[i];
-            boolean hasField = rowH > PIN_ROW_H;
-            float pinX = sx + PIN_MARGIN_X * zoom;
+    private void renderInputPin(DataStore.Event event, DataStore.Event.Node node, NodeType.PinDef pin) {
+        long    pid       = pinId(node.getId(), pin.id());
+        boolean isExec    = pin.kind() == NodeType.PinKind.EXEC;
+        boolean connected = !isExec && isConnectedInput(event, node.getId(), pin.id());
 
-            if (hasField) {
-                // Label row: circle at label mid-height, then label text
-                float pinY = curY + PIN_LABEL_H * zoom * 0.5f;
-                int pinCol = COL_PIN_STRING;
-                dl.addCircleFilled(pinX, pinY, PIN_RADIUS * zoom, pinCol);
-                String label = friendlyPinName(pin.id());
-                dl.addText(pinX + (PIN_RADIUS + 4f) * zoom, curY + 1f * zoom, COL_LABEL, label);
-                pinScreenPos.put(node.getId() + ":" + pin.id(), new float[]{pinX, pinY});
+        NodeEditor.beginPin(pid, NodeEditorPinKind.Input);
+        ImVec2 cp = ImGui.getCursorScreenPos();
+        ImGui.dummy(PIN_SIZE, PIN_SIZE);
+        ImGui.getWindowDrawList().addCircleFilled(
+                cp.x + PIN_SIZE * 0.5f, cp.y + PIN_SIZE * 0.5f, PIN_RADIUS,
+                isExec ? COL_PIN_EXEC : COL_PIN_STRING);
+        NodeEditor.endPin();
 
-                // Field row: text input beneath the label
-                float fieldX = pinX + (PIN_RADIUS + 4f) * zoom;
-                float fieldW = sw - (PIN_MARGIN_X + PIN_RADIUS + 8f) * zoom;
-                if (fieldW > 40f) {
-                    String current = node.getParams() != null ? node.getParams().getOrDefault(pin.id(), "") : "";
-                    ImString imStr = new ImString(current, 256);
-                    ImGui.setCursorScreenPos(fieldX, curY + PIN_LABEL_H * zoom);
-                    ImGui.setNextItemWidth(fieldW);
-                    if (ImGui.inputText("##pin_" + node.getId() + "_" + pin.id(), imStr)) {
-                        if (node.getParams() == null) node.setParams(new HashMap<>());
-                        node.getParams().put(pin.id(), imStr.get());
-                    }
-                }
+        if (!isExec) {
+            ImGui.sameLine();
+            if (connected) {
+                ImGui.text(friendlyPinName(pin.id()));
             } else {
-                // Single row: exec or connected STRING pin — circle + label on the same line
-                float pinY = curY + PIN_ROW_H * zoom * 0.5f;
-                int pinCol = pin.kind() == NodeType.PinKind.EXEC ? COL_PIN_EXEC : COL_PIN_STRING;
-                dl.addCircleFilled(pinX, pinY, PIN_RADIUS * zoom, pinCol);
-                if (pin.kind() != NodeType.PinKind.EXEC) {
-                    dl.addText(pinX + (PIN_RADIUS + 4f) * zoom, pinY - 6f * zoom, COL_TEXT, friendlyPinName(pin.id()));
+                // Inline label + text field for unconnected data pins
+                ImGui.text(friendlyPinName(pin.id()) + ":");
+                ImGui.sameLine();
+                String cur = node.getParams() != null
+                        ? node.getParams().getOrDefault(pin.id(), "") : "";
+                ImString val = new ImString(cur, 256);
+                ImGui.setNextItemWidth(100f);
+                if (ImGui.inputText("##" + pin.id(), val)) {
+                    if (node.getParams() == null) node.setParams(new HashMap<>());
+                    node.getParams().put(pin.id(), val.get());
                 }
-                pinScreenPos.put(node.getId() + ":" + pin.id(), new float[]{pinX, pinY});
             }
-            curY += rowH * zoom;
-        }
-
-        // --- Output pins (right side) ---
-        curY = pinAreaY;
-        for (int i = 0; i < outputs.size(); i++) {
-            NodeType.PinDef pin = outputs.get(i);
-            float pinY = curY + PIN_ROW_H * zoom * 0.5f;
-            float pinX = sx + sw - PIN_MARGIN_X * zoom;
-            int pinCol = pin.kind() == NodeType.PinKind.EXEC ? COL_PIN_EXEC : COL_PIN_STRING;
-            dl.addCircleFilled(pinX, pinY, PIN_RADIUS * zoom, pinCol);
-
-            // Label: right-align to just left of the circle using accurate text width
-            if (pin.kind() != NodeType.PinKind.EXEC) {
-                String label = friendlyPinName(pin.id());
-                ImVec2 ts = ImGui.calcTextSize(label);
-                float labelX = pinX - ts.x - (PIN_RADIUS + 4f) * zoom;
-                dl.addText(labelX, pinY - 6f * zoom, COL_TEXT, label);
-            }
-            pinScreenPos.put(node.getId() + ":" + pin.id(), new float[]{pinX, pinY});
-            curY += PIN_ROW_H * zoom;
         }
     }
+
+    private void renderOutputPin(DataStore.Event.Node node, NodeType.PinDef pin) {
+        long    pid    = pinId(node.getId(), pin.id());
+        boolean isExec = pin.kind() == NodeType.PinKind.EXEC;
+        int     color  = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
+
+        // Right-align the pin circle within the node width.
+        float rowStartX = ImGui.getCursorPosX();
+        float avail     = Math.max(NODE_MIN_W, ImGui.getContentRegionAvail().x);
+        float pinX      = rowStartX + avail - PIN_SIZE;
+
+        if (!isExec) {
+            String label  = friendlyPinName(pin.id());
+            float  labelW = ImGui.calcTextSize(label).x;
+            // Place label just to the left of the circle.
+            ImGui.setCursorPosX(Math.max(rowStartX, pinX - labelW - 4f));
+            ImGui.text(label);
+            ImGui.sameLine();
+        }
+
+        ImGui.setCursorPosX(pinX);
+        NodeEditor.beginPin(pid, NodeEditorPinKind.Output);
+        ImVec2 cp = ImGui.getCursorScreenPos();
+        ImGui.dummy(PIN_SIZE, PIN_SIZE);
+        ImGui.getWindowDrawList().addCircleFilled(
+                cp.x + PIN_SIZE * 0.5f, cp.y + PIN_SIZE * 0.5f, PIN_RADIUS, color);
+        NodeEditor.endPin();
+    }
+
+    // =========================================================================
+    // Create / Delete handling
+    // =========================================================================
+
+    private void handleCreate(DataStore.Event event, StorageProvider storage) {
+        if (!NodeEditor.beginCreate()) return;
+
+        ImLong startPin = new ImLong();
+        ImLong endPin   = new ImLong();
+        if (NodeEditor.queryNewLink(startPin, endPin)) {
+            String[][] fromTo = resolveFromTo(event, startPin.get(), endPin.get());
+            if (fromTo != null && pinKindMatch(event, fromTo[0], fromTo[1])) {
+                if (NodeEditor.acceptNewItem()) {
+                    // Remove any existing wire into the target input pin first.
+                    event.getConnections().removeIf(c ->
+                            c.getToNodeId().equals(fromTo[1][0]) && c.getToPin().equals(fromTo[1][1]));
+                    DataStore.Event.Connection conn = new DataStore.Event.Connection(
+                            fromTo[0][0], fromTo[0][1], fromTo[1][0], fromTo[1][1]);
+                    event.getConnections().add(conn);
+                    linkId(conn); // register the new link ID in our map
+                    storage.save();
+                }
+            } else {
+                NodeEditor.rejectNewItem();
+            }
+        }
+
+        NodeEditor.endCreate();
+    }
+
+    private void handleDelete(DataStore.Event event, StorageProvider storage) {
+        if (!NodeEditor.beginDelete()) return;
+        boolean changed = false;
+
+        ImLong deletedNode = new ImLong();
+        while (NodeEditor.queryDeletedNode(deletedNode)) {
+            if (NodeEditor.acceptDeletedItem()) {
+                long   nid  = deletedNode.get();
+                String uuid = nodeLookup.get(nid);
+                if (uuid != null) {
+                    event.getNodes().removeIf(n -> n.getId().equals(uuid));
+                    event.getConnections().removeIf(c ->
+                            c.getFromNodeId().equals(uuid) || c.getToNodeId().equals(uuid));
+                    initializedPositions.remove(nid);
+                    changed = true;
+                }
+            }
+        }
+
+        ImLong deletedLink = new ImLong();
+        while (NodeEditor.queryDeletedLink(deletedLink)) {
+            if (NodeEditor.acceptDeletedItem()) {
+                String key = linkLookup.get(deletedLink.get());
+                if (key != null) {
+                    String[] p = key.split(":", 4);
+                    if (p.length == 4) {
+                        event.getConnections().removeIf(c ->
+                                c.getFromNodeId().equals(p[0]) && c.getFromPin().equals(p[1]) &&
+                                c.getToNodeId().equals(p[2])   && c.getToPin().equals(p[3]));
+                    }
+                    changed = true;
+                }
+            }
+        }
+
+        NodeEditor.endDelete();
+        if (changed) storage.save();
+    }
+
+    // =========================================================================
+    // Position sync
+    // =========================================================================
+
+    /**
+     * Copies the current NodeEditor canvas positions back into the DataStore working copy.
+     * Called every frame so that positions are captured when the event is explicitly saved.
+     */
+    private void syncPositions(DataStore.Event event) {
+        if (event.getNodes() == null) return;
+        for (DataStore.Event.Node node : event.getNodes()) {
+            long nid = idMap.getOrDefault("n:" + node.getId(), 0L);
+            if (nid == 0L || !initializedPositions.contains(nid)) continue;
+            node.setX(NodeEditor.getNodePositionX(nid));
+            node.setY(NodeEditor.getNodePositionY(nid));
+        }
+    }
+
+    // =========================================================================
+    // ID registry
+    // =========================================================================
+
+    private long nodeId(String uuid) {
+        String key = "n:" + uuid;
+        Long   id  = idMap.get(key);
+        if (id == null) {
+            id = nextId++;
+            idMap.put(key, id);
+            nodeLookup.put(id, uuid);
+        }
+        return id;
+    }
+
+    private long pinId(String nodeUuid, String pinName) {
+        String key = "p:" + nodeUuid + ":" + pinName;
+        Long   id  = idMap.get(key);
+        if (id == null) {
+            id = nextId++;
+            idMap.put(key, id);
+            pinLookup.put(id, new String[]{nodeUuid, pinName});
+        }
+        return id;
+    }
+
+    private long linkId(DataStore.Event.Connection conn) {
+        String key = "l:" + conn.getFromNodeId() + ":" + conn.getFromPin()
+                       + ":" + conn.getToNodeId() + ":" + conn.getToPin();
+        Long id = idMap.get(key);
+        if (id == null) {
+            id = nextId++;
+            idMap.put(key, id);
+            linkLookup.put(id, conn.getFromNodeId() + ":" + conn.getFromPin()
+                              + ":" + conn.getToNodeId() + ":" + conn.getToPin());
+        }
+        return id;
+    }
+
+    // =========================================================================
+    // Graph helpers
+    // =========================================================================
+
+    /**
+     * Given two pin IDs returned by {@link NodeEditor#queryNewLink}, identifies which is
+     * the output (from) pin and which is the input (to) pin.
+     *
+     * @return {@code String[][]{from, to}} where each element is {@code [nodeUuid, pinId]},
+     *         or {@code null} if both pins are the same kind or belong to the same node.
+     */
+    private String[][] resolveFromTo(DataStore.Event event, long pinA, long pinB) {
+        String[] a = pinLookup.get(pinA);
+        String[] b = pinLookup.get(pinB);
+        if (a == null || b == null || a[0].equals(b[0])) return null;
+        boolean aIsOut = isOutputPin(event, a[0], a[1]);
+        boolean bIsOut = isOutputPin(event, b[0], b[1]);
+        if (aIsOut && !bIsOut) return new String[][]{a, b};
+        if (!aIsOut && bIsOut) return new String[][]{b, a};
+        return null; // both inputs or both outputs — reject
+    }
+
+    private boolean isOutputPin(DataStore.Event event, String nodeUuid, String pinId) {
+        DataStore.Event.Node node = findNode(event, nodeUuid);
+        if (node == null) return false;
+        NodeType nt = NodeType.getByName(node.getType());
+        if (nt == null) return false;
+        return nt.outputPins().stream().anyMatch(p -> p.id().equals(pinId));
+    }
+
+    /**
+     * Returns {@code true} if the output pin and input pin carry the same data kind
+     * (EXEC↔EXEC or STRING↔STRING).
+     *
+     * @param from {@code [nodeUuid, pinId]} for the output side
+     * @param to   {@code [nodeUuid, pinId]} for the input side
+     */
+    private boolean pinKindMatch(DataStore.Event event, String[] from, String[] to) {
+        DataStore.Event.Node fn = findNode(event, from[0]);
+        DataStore.Event.Node tn = findNode(event, to[0]);
+        if (fn == null || tn == null) return false;
+        NodeType fnt = NodeType.getByName(fn.getType());
+        NodeType tnt = NodeType.getByName(tn.getType());
+        if (fnt == null || tnt == null) return false;
+        NodeType.PinKind fromKind = fnt.outputPins().stream()
+                .filter(p -> p.id().equals(from[1])).findFirst().map(NodeType.PinDef::kind).orElse(null);
+        NodeType.PinKind toKind = tnt.inputPins().stream()
+                .filter(p -> p.id().equals(to[1])).findFirst().map(NodeType.PinDef::kind).orElse(null);
+        return fromKind != null && toKind != null && fromKind == toKind;
+    }
+
+    private boolean isConnectedInput(DataStore.Event event, String nodeId, String pinId) {
+        if (event.getConnections() == null) return false;
+        return event.getConnections().stream()
+                .anyMatch(c -> c.getToNodeId().equals(nodeId) && c.getToPin().equals(pinId));
+    }
+
+    private DataStore.Event.Node findNode(DataStore.Event event, String nodeId) {
+        if (event.getNodes() == null) return null;
+        return event.getNodes().stream()
+                .filter(n -> n.getId().equals(nodeId))
+                .findFirst().orElse(null);
+    }
+
+    // =========================================================================
+    // Style helpers
+    // =========================================================================
 
     /** Converts a raw pin ID to a user-friendly label. Strips {@code data_} prefix and capitalizes. */
     private static String friendlyPinName(String pinId) {
@@ -313,264 +482,39 @@ public class NodeEditorCanvas {
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
-    private boolean isConnectedInput(DataStore.Event event, String nodeId, String pinId) {
-        if (event.getConnections() == null) return false;
-        return event.getConnections().stream()
-                .anyMatch(c -> c.getToNodeId().equals(nodeId) && c.getToPin().equals(pinId));
+    /** Node background color (RGBA, 0–1) for each category — a dark tint. */
+    private static float[] categoryBg(NodeType.Category cat) {
+        return switch (cat) {
+            case TRIGGER   -> new float[]{0.12f, 0.09f, 0.22f, 1.0f};
+            case CONDITION -> new float[]{0.09f, 0.18f, 0.09f, 1.0f};
+            case ACTION    -> new float[]{0.22f, 0.13f, 0.06f, 1.0f};
+            case VALUE     -> new float[]{0.06f, 0.18f, 0.22f, 1.0f};
+        };
     }
 
-    private void renderWires(ImDrawList dl, DataStore.Event event) {
-        for (DataStore.Event.Connection conn : event.getConnections()) {
-            float[] from = pinScreenPos.get(conn.getFromNodeId() + ":" + conn.getFromPin());
-            float[] to   = pinScreenPos.get(conn.getToNodeId()   + ":" + conn.getToPin());
-            if (from == null || to == null) continue;
-            boolean isExec = conn.getFromPin().startsWith("exec")
-                    || conn.getFromPin().equals("pass")
-                    || conn.getFromPin().equals("fail");
-            int col = isExec ? COL_WIRE_EXEC : COL_WIRE_STRING;
-            drawBezier(dl, from[0], from[1], to[0], to[1], col, 2f);
-        }
+    /** Node border color (RGBA, 0–1) for each category — a lighter accent. */
+    private static float[] categoryBorder(NodeType.Category cat) {
+        return switch (cat) {
+            case TRIGGER   -> new float[]{0.38f, 0.27f, 0.91f, 0.9f};
+            case CONDITION -> new float[]{0.29f, 0.87f, 0.29f, 0.9f};
+            case ACTION    -> new float[]{0.94f, 0.65f, 0.38f, 0.9f};
+            case VALUE     -> new float[]{0.08f, 0.80f, 0.98f, 0.9f};
+        };
     }
 
-    private void drawBezier(ImDrawList dl, float x1, float y1, float x2, float y2,
-                             int color, float thickness) {
-        float dx = Math.abs(x2 - x1) * 0.6f + 50f * zoom;
-        float cp1x = x1 + dx, cp1y = y1;
-        float cp2x = x2 - dx, cp2y = y2;
-        dl.addBezierCubic(x1, y1, cp1x, cp1y, cp2x, cp2y, x2, y2, color, thickness);
+    /** Title text color (RGBA, 0–1) for each category. */
+    private static float[] categoryTitleColor(NodeType.Category cat) {
+        return switch (cat) {
+            case TRIGGER   -> new float[]{0.65f, 0.53f, 1.00f, 1.0f};
+            case CONDITION -> new float[]{0.50f, 1.00f, 0.50f, 1.0f};
+            case ACTION    -> new float[]{1.00f, 0.75f, 0.40f, 1.0f};
+            case VALUE     -> new float[]{0.30f, 0.90f, 1.00f, 1.0f};
+        };
     }
 
-    // -------------------------------------------------------------------------
-    // Interaction handling
-    // -------------------------------------------------------------------------
-
-    private void handleInteractions(DataStore.Event event, StorageProvider storage,
-                                     float cx, float cy, float cw, float ch,
-                                     boolean canvasHovered) {
-        ImVec2 mouse = ImGui.getMousePos();
-        float  mx = mouse.x, my = mouse.y;
-
-        // --- Zoom (scroll wheel on canvas) ---
-        if (canvasHovered && ImGui.getIO().getMouseWheel() != 0) {
-            float delta = ImGui.getIO().getMouseWheel();
-            float newZoom = Math.max(0.3f, Math.min(2.0f, zoom * (1f + delta * 0.1f)));
-            // Zoom toward mouse
-            float worldX = (mx - cx - panX) / zoom;
-            float worldY = (my - cy - panY) / zoom;
-            zoom  = newZoom;
-            panX  = mx - cx - worldX * zoom;
-            panY  = my - cy - worldY * zoom;
+    private void ensureContext() {
+        if (context == null) {
+            context = NodeEditor.createEditor();
         }
-
-        // --- Pan (middle mouse drag) ---
-        if (canvasHovered && ImGui.isMouseDragging(ImGuiMouseButton.Middle)) {
-            ImVec2 delta = ImGui.getMouseDragDelta(ImGuiMouseButton.Middle);
-            panX += delta.x;
-            panY += delta.y;
-            ImGui.resetMouseDragDelta(ImGuiMouseButton.Middle);
-        }
-
-        // --- Node drag (left mouse on header) ---
-        if (ImGui.isMouseDown(ImGuiMouseButton.Left)) {
-            if (dragNodeId == null) {
-                // Check if clicking a node header
-                for (Map.Entry<String, float[]> e : nodeHeaderBounds.entrySet()) {
-                    float[] b = e.getValue();
-                    if (mx >= b[0] && mx <= b[0] + b[2] && my >= b[1] && my <= b[1] + b[3]) {
-                        dragNodeId = e.getKey();
-                        selectedNodeId = dragNodeId;
-                        dragStartMouseX = mx; dragStartMouseY = my;
-                        DataStore.Event.Node n = findNode(event, dragNodeId);
-                        if (n != null) { dragStartNodeX = n.getX(); dragStartNodeY = n.getY(); }
-                        break;
-                    }
-                }
-            } else {
-                DataStore.Event.Node n = findNode(event, dragNodeId);
-                if (n != null) {
-                    n.setX(dragStartNodeX + (mx - dragStartMouseX) / zoom);
-                    n.setY(dragStartNodeY + (my - dragStartMouseY) / zoom);
-                }
-            }
-        } else {
-            if (dragNodeId != null) {
-                storage.save();
-                dragNodeId = null;
-            }
-        }
-
-        // --- Pin connection (left click on output pin) ---
-        if (ImGui.isMouseClicked(ImGuiMouseButton.Left)) {
-            boolean hitPin = false;
-            for (Map.Entry<String, float[]> e : pinScreenPos.entrySet()) {
-                String key = e.getKey();
-                float[] pos = e.getValue();
-                if (dist(mx, my, pos[0], pos[1]) <= PIN_RADIUS * zoom + 4f) {
-                    String[] parts = key.split(":", 2);
-                    String   nId   = parts[0];
-                    String   pId   = parts[1];
-                    DataStore.Event.Node node = findNode(event, nId);
-                    if (node == null) continue;
-                    NodeType nt = NodeType.getByName(node.getType());
-                    if (nt == null) continue;
-                    boolean isOutput = nt.outputPins().stream().anyMatch(p -> p.id().equals(pId));
-
-                    if (pendingFromNodeId != null) {
-                        // Complete wire if compatible and clicking an input pin
-                        if (!isOutput && isCompatible(event, pendingFromNodeId, pendingFromPin, nId, pId)) {
-                            // Remove existing connection to this input if any
-                            event.getConnections().removeIf(c ->
-                                    c.getToNodeId().equals(nId) && c.getToPin().equals(pId));
-                            event.getConnections().add(new DataStore.Event.Connection(
-                                    pendingFromNodeId, pendingFromPin, nId, pId));
-                            storage.save();
-                        }
-                        pendingFromNodeId = null;
-                        hitPin = true;
-                        break;
-                    } else if (isOutput) {
-                        pendingFromNodeId  = nId;
-                        pendingFromPin     = pId;
-                        pendingFromScreenX = pos[0];
-                        pendingFromScreenY = pos[1];
-                        hitPin = true;
-                        break;
-                    }
-                }
-            }
-            if (!hitPin && pendingFromNodeId != null) {
-                // Clicked elsewhere — cancel wire
-                pendingFromNodeId = null;
-            }
-        }
-
-        // --- Right-click context menu ---
-        if (ImGui.isMouseClicked(ImGuiMouseButton.Right)) {
-            // Check node right-click
-            for (Map.Entry<String, float[]> e : nodeScreenBounds.entrySet()) {
-                float[] b = e.getValue();
-                if (mx >= b[0] && mx <= b[0] + b[2] && my >= b[1] && my <= b[1] + b[3]) {
-                    ImGui.openPopup("##nodeCtx_" + e.getKey());
-                    break;
-                }
-            }
-            // Check wire right-click
-            if (event.getConnections() != null) {
-                for (DataStore.Event.Connection conn : new ArrayList<>(event.getConnections())) {
-                    float[] from = pinScreenPos.get(conn.getFromNodeId() + ":" + conn.getFromPin());
-                    float[] to   = pinScreenPos.get(conn.getToNodeId()   + ":" + conn.getToPin());
-                    if (from != null && to != null
-                            && isNearBezier(mx, my, from[0], from[1], to[0], to[1], 6f)) {
-                        ImGui.openPopup("##wireCtx_" + conn.getFromNodeId() + "_" + conn.getFromPin());
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Render node context menus
-        if (event.getNodes() != null) {
-            for (DataStore.Event.Node node : new ArrayList<>(event.getNodes())) {
-                if (ImGui.beginPopup("##nodeCtx_" + node.getId())) {
-                    if (ImGui.menuItem("Delete Node")) {
-                        String nId = node.getId();
-                        event.getNodes().removeIf(n -> n.getId().equals(nId));
-                        if (event.getConnections() != null) {
-                            event.getConnections().removeIf(c ->
-                                    c.getFromNodeId().equals(nId) || c.getToNodeId().equals(nId));
-                        }
-                        if (nId.equals(selectedNodeId)) selectedNodeId = null;
-                        storage.save();
-                    }
-                    ImGui.endPopup();
-                }
-            }
-        }
-
-        // Render wire context menus
-        if (event.getConnections() != null) {
-            for (DataStore.Event.Connection conn : new ArrayList<>(event.getConnections())) {
-                String popupId = "##wireCtx_" + conn.getFromNodeId() + "_" + conn.getFromPin();
-                if (ImGui.beginPopup(popupId)) {
-                    if (ImGui.menuItem("Delete Connection")) {
-                        event.getConnections().remove(conn);
-                        storage.save();
-                    }
-                    ImGui.endPopup();
-                }
-            }
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Private utilities
-    // -------------------------------------------------------------------------
-
-    private DataStore.Event.Node findNode(DataStore.Event event, String nodeId) {
-        if (event.getNodes() == null) return null;
-        return event.getNodes().stream()
-                .filter(n -> n.getId().equals(nodeId))
-                .findFirst().orElse(null);
-    }
-
-    private float dist(float x1, float y1, float x2, float y2) {
-        float dx = x2 - x1, dy = y2 - y1;
-        return (float) Math.sqrt(dx * dx + dy * dy);
-    }
-
-    /**
-     * Samples the bezier curve at 20 points and returns {@code true} if {@code (mx, my)}
-     * is within {@code tolerance} pixels of any sample point.
-     *
-     * @param mx        mouse X in screen coordinates
-     * @param my        mouse Y in screen coordinates
-     * @param x1        start point X
-     * @param y1        start point Y
-     * @param x2        end point X
-     * @param y2        end point Y
-     * @param tolerance hit-test radius in pixels
-     */
-    private boolean isNearBezier(float mx, float my,
-                                  float x1, float y1, float x2, float y2, float tolerance) {
-        float dx = Math.abs(x2 - x1) * 0.6f + 50f * zoom;
-        float cp1x = x1 + dx, cp1y = y1;
-        float cp2x = x2 - dx, cp2y = y2;
-        for (int i = 0; i <= 20; i++) {
-            float t  = i / 20f;
-            float it = 1f - t;
-            float bx = it*it*it*x1 + 3*it*it*t*cp1x + 3*it*t*t*cp2x + t*t*t*x2;
-            float by = it*it*it*y1 + 3*it*it*t*cp1y + 3*it*t*t*cp2y + t*t*t*y2;
-            if (dist(mx, my, bx, by) <= tolerance) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Returns {@code true} if a wire from {@code fromPin} to {@code toPin} is type-compatible
-     * (EXEC-to-EXEC or STRING-to-STRING) and does not connect a node to itself.
-     *
-     * @param event      the event providing the node list
-     * @param fromNodeId source node id
-     * @param fromPin    source pin id (output)
-     * @param toNodeId   target node id
-     * @param toPin      target pin id (input)
-     */
-    private boolean isCompatible(DataStore.Event event,
-                                  String fromNodeId, String fromPin,
-                                  String toNodeId,   String toPin) {
-        if (fromNodeId.equals(toNodeId)) return false;
-        DataStore.Event.Node fromNode = findNode(event, fromNodeId);
-        DataStore.Event.Node toNode   = findNode(event, toNodeId);
-        if (fromNode == null || toNode == null) return false;
-        NodeType fromNt = NodeType.getByName(fromNode.getType());
-        NodeType toNt   = NodeType.getByName(toNode.getType());
-        if (fromNt == null || toNt == null) return false;
-        NodeType.PinKind fromKind = fromNt.outputPins().stream()
-                .filter(p -> p.id().equals(fromPin))
-                .findFirst().map(NodeType.PinDef::kind).orElse(null);
-        NodeType.PinKind toKind = toNt.inputPins().stream()
-                .filter(p -> p.id().equals(toPin))
-                .findFirst().map(NodeType.PinDef::kind).orElse(null);
-        return fromKind != null && fromKind == toKind;
     }
 }
