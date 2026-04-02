@@ -53,7 +53,6 @@ public class StorageProvider {
                 .onInitialized(e -> {
                     if (e.success() && !e.content().isEmpty()) {
                         data = DataStore.fromJson(e.content());
-                        migrateIfNeeded(data);
                     }
                 })
                 .onReload(e -> {
@@ -66,6 +65,8 @@ public class StorageProvider {
                     }
                 })
                 .build();
+        // Migrate after build() so that manager is non-null when save() is called
+        if (data != null) migrateIfNeeded(data);
     }
 
     /**
