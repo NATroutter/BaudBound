@@ -253,29 +253,19 @@ public class NodeEditorCanvas {
     private void renderOutputPin(DataStore.Event.Node node, NodeType.PinDef pin) {
         long    pid    = pinId(node.getId(), pin.id());
         boolean isExec = pin.kind() == NodeType.PinKind.EXEC;
-        int     color  = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
+        int color = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
 
-        // Right-align the pin circle within the node width.
-        float rowStartX = ImGui.getCursorPosX();
-        float avail     = Math.max(NODE_MIN_W, ImGui.getContentRegionAvail().x);
-        float pinX      = rowStartX + avail - PIN_SIZE;
-
-        if (!isExec) {
-            String label  = friendlyPinName(pin.id());
-            float  labelW = ImGui.calcTextSize(label).x;
-            // Place label just to the left of the circle.
-            ImGui.setCursorPosX(Math.max(rowStartX, pinX - labelW - 4f));
-            ImGui.text(label);
-            ImGui.sameLine();
-        }
-
-        ImGui.setCursorPosX(pinX);
         NodeEditor.beginPin(pid, NodeEditorPinKind.Output);
         ImVec2 cp = ImGui.getCursorScreenPos();
         ImGui.dummy(PIN_SIZE, PIN_SIZE);
         ImGui.getWindowDrawList().addCircleFilled(
                 cp.x + PIN_SIZE * 0.5f, cp.y + PIN_SIZE * 0.5f, PIN_RADIUS, color);
         NodeEditor.endPin();
+
+        if (!isExec) {
+            ImGui.sameLine();
+            ImGui.text(friendlyPinName(pin.id()));
+        }
     }
 
     // =========================================================================
