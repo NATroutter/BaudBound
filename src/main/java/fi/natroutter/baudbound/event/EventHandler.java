@@ -26,7 +26,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
@@ -129,8 +128,10 @@ public class EventHandler {
 
     /**
      * Evaluates all configured events against the trigger context by executing their node graphs.
-     * For each event, every trigger node whose type matches the incoming source is used as a graph
-     * entry point; execution then follows {@code exec_out} connections through condition and action nodes.
+     * For each event, every trigger node whose type matches the incoming source and passes the optional
+     * {@link #triggerMatchesContext device/channel filter} is used as a graph entry point. Each
+     * matching trigger launches a virtual thread that owns its own {@code dataCache} and executes
+     * the connected node graph synchronously from that point, calling action nodes inline.
      *
      * @param ctx the trigger context carrying the input payload, source, and optional device
      */
@@ -145,10 +146,36 @@ public class EventHandler {
                 if (nt == null) continue;
                 if (nt.getCategory() != NodeType.Category.TRIGGER) continue;
                 if (!nt.matchesSource(ctx.source())) continue;
+                if (!triggerMatchesContext(node, ctx)) continue;
 
-                executeFrom(event, node.getId(), "exec_out", ctx, new HashMap<>());
+                Thread.ofVirtual().start(() ->
+                    executeFrom(event, node.getId(), "exec_out", ctx, new HashMap<>()));
             }
         }
+    }
+
+    /**
+     * Returns {@code true} if the trigger node's optional filter params allow this context to fire.
+     * <p>
+     * If the trigger node has a non-blank {@code deviceFilter} param, only contexts whose device
+     * name matches are accepted. If it has a non-blank {@code channelFilter} param, only WebSocket
+     * contexts whose channel equals the filter are accepted.
+     *
+     * @param triggerNode the TRIGGER node being tested
+     * @param ctx         the current trigger context
+     * @return {@code true} if all filters pass or no filters are set
+     */
+    private boolean triggerMatchesContext(DataStore.Event.Node triggerNode, TriggerContext ctx) {
+        if (triggerNode.getParams() == null) return true;
+        String deviceFilter  = triggerNode.getParams().get("deviceFilter");
+        String channelFilter = triggerNode.getParams().get("channelFilter");
+        if (deviceFilter != null && !deviceFilter.isBlank()) {
+            if (ctx.device() == null || !ctx.device().getName().equals(deviceFilter)) return false;
+        }
+        if (channelFilter != null && !channelFilter.isBlank()) {
+            if (ctx.channel() == null || !ctx.channel().equals(channelFilter)) return false;
+        }
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -203,7 +230,7 @@ public class EventHandler {
                 executeFrom(event, nextNode.getId(), outPin, ctx, dataCache, depth + 1);
             }
             case ACTION -> {
-                Thread.ofVirtual().start(() -> fireAction(event, nextNode, nt, ctx, dataCache));
+                fireAction(event, nextNode, nt, ctx, dataCache);
                 executeFrom(event, nextNode.getId(), "exec_out", ctx, dataCache, depth + 1);
             }
             default -> logger.warn("Unexpected node category in exec chain: " + nt.getCategory());
@@ -326,28 +353,28 @@ public class EventHandler {
                 case EQUALS -> {
                     String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
                     String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
-                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    boolean cs = node.getParams() != null && "true".equalsIgnoreCase(node.getParams().get("caseSensitive"));
                     yield cs ? a.equals(b) : a.equalsIgnoreCase(b);
                 }
                 case NOT_EQUALS  -> !evaluateCondition(event, node, NodeType.EQUALS, ctx, dataCache);
                 case CONTAINS -> {
                     String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
                     String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
-                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    boolean cs = node.getParams() != null && "true".equalsIgnoreCase(node.getParams().get("caseSensitive"));
                     yield cs ? a.contains(b) : a.toLowerCase().contains(b.toLowerCase());
                 }
                 case NOT_CONTAINS -> !evaluateCondition(event, node, NodeType.CONTAINS, ctx, dataCache);
                 case STARTS_WITH -> {
                     String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
                     String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
-                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    boolean cs = node.getParams() != null && "true".equalsIgnoreCase(node.getParams().get("caseSensitive"));
                     yield cs ? a.startsWith(b) : a.toLowerCase().startsWith(b.toLowerCase());
                 }
                 case NOT_STARTS_WITH -> !evaluateCondition(event, node, NodeType.STARTS_WITH, ctx, dataCache);
                 case ENDS_WITH -> {
                     String a = resolvePin(event, node.getId(), "data_a", ctx, dataCache);
                     String b = resolvePin(event, node.getId(), "data_b", ctx, dataCache);
-                    boolean cs = "true".equalsIgnoreCase(node.getParams().getOrDefault("caseSensitive", "false"));
+                    boolean cs = node.getParams() != null && "true".equalsIgnoreCase(node.getParams().get("caseSensitive"));
                     yield cs ? a.endsWith(b) : a.toLowerCase().endsWith(b.toLowerCase());
                 }
                 case NOT_ENDS_WITH -> !evaluateCondition(event, node, NodeType.ENDS_WITH, ctx, dataCache);
@@ -393,8 +420,9 @@ public class EventHandler {
      * Fires the side effects of an ACTION node. Each action type reads its inputs from wired
      * data pins (via {@link #resolvePin}) or inline params.
      * <p>
-     * This method is always called on a virtual thread so that slow I/O (HTTP, file, audio)
-     * never blocks the serial read or graph traversal loops.
+     * This method is called synchronously on the virtual thread that owns the current graph
+     * traversal, so slow I/O (HTTP, file, audio) does not block the serial read loop but also
+     * does not share state with other concurrent graph executions.
      *
      * @param event     the event being executed
      * @param node      the action node
