@@ -3,35 +3,26 @@ package fi.natroutter.baudbound.gui;
 import fi.natroutter.baudbound.enums.NodeType;
 import fi.natroutter.baudbound.storage.DataStore;
 import fi.natroutter.baudbound.storage.StorageProvider;
+import imgui.ImDrawList;
 import imgui.ImGui;
 import imgui.ImVec2;
 import imgui.extension.nodeditor.NodeEditor;
 import imgui.extension.nodeditor.NodeEditorContext;
 import imgui.extension.nodeditor.flag.NodeEditorPinKind;
 import imgui.extension.nodeditor.flag.NodeEditorStyleColor;
-import imgui.flag.ImGuiCol;
 import imgui.type.ImLong;
 import imgui.type.ImString;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * Node graph editor canvas backed by {@code imgui.extension.nodeditor.NodeEditor}
- * (imgui-node-editor by thedmd).
- *
- * <p>The extension handles pan, zoom, grid, bezier wires, drag-to-connect, and
- * selection/deletion. This class is responsible only for placing node and pin
- * content using standard ImGui widgets inside the extension's begin/end calls.
- *
- * <p>ID mapping: because NodeEditor uses {@code long} IDs we maintain a stable
- * {@link #idMap} from string keys to sequentially-assigned longs.
- * Keys use the format {@code "n:<uuid>"} for nodes, {@code "p:<uuid>:<pinId>"}
- * for pins, and {@code "l:<fromNodeId>:<fromPin>:<toNodeId>:<toPin>"} for links.
+ * Node graph editor canvas backed by {@code imgui.extension.nodeditor.NodeEditor}.
  *
  * <p>Must be called from the GLFW main thread each frame via {@link #render}.
  * Call {@link #dispose()} when the owning dialog is permanently torn down.
@@ -40,66 +31,48 @@ public class NodeEditorCanvas {
 
     private NodeEditorContext context;
 
-    /**
-     * Stable string-key → long ID registry used by NodeEditor.
-     * Key formats: {@code "n:<uuid>"}, {@code "p:<uuid>:<pinId>"},
-     * {@code "l:<fromNodeId>:<fromPin>:<toNodeId>:<toPin>"}
-     */
-    private final Map<String, Long> idMap = new HashMap<>();
-    /** Reverse lookup: pin long ID → {@code [nodeUuid, pinId]}. */
-    private final Map<Long, String[]> pinLookup = new HashMap<>();
-    /** Reverse lookup: link long ID → {@code "fromNodeId:fromPin:toNodeId:toPin"}. */
-    private final Map<Long, String> linkLookup = new HashMap<>();
-    /** Reverse lookup: node long ID → nodeUuid. */
-    private final Map<Long, String> nodeLookup = new HashMap<>();
+    private final Map<String, Long>    idMap      = new HashMap<>();
+    private final Map<Long, String[]>  pinLookup  = new HashMap<>();
+    private final Map<Long, String>    linkLookup = new HashMap<>();
+    private final Map<Long, String>    nodeLookup = new HashMap<>();
 
     private long nextId = 1L;
 
-    /** Node IDs that have already had {@link NodeEditor#setNodePosition} applied. */
     private final Set<Long> initializedPositions = new HashSet<>();
-
-    /** When {@code true}, {@link NodeEditor#navigateToContent()} is called at end of next frame. */
     private boolean pendingNavigate = false;
-
-    /** Canvas-space coordinates of the visible center — updated every frame for spawn placement. */
     private float spawnX = 0f, spawnY = 0f;
 
     // ---- Layout constants ----
-    /** Side length of the invisible dummy widget used as a pin hit-target. */
-    private static final float PIN_SIZE   = 12f;
-    /** Radius of the drawn pin circle. */
-    private static final float PIN_RADIUS = 5f;
-    /**
-     * Minimum content width used as a floor for {@link ImGui#getContentRegionAvail()}.x
-     * when right-aligning output pins on the first frame before node size is known.
-     */
-    private static final float NODE_MIN_W = 180f;
+    private static final float ICON_SIZE     = 24f;
+    private static final float ICON_RADIUS   = 9f;
+    private static final float HEADER_HEIGHT = 30f;
+    private static final float NODE_MIN_W    = 200f;
 
-    // ---- Pin / icon colors (ABGR packed ints for ImDrawList) ----
+    // ---- Pin colors (ABGR for ImDrawList) ----
     private static final int COL_PIN_EXEC   = 0xFFFFFFFF;
-    private static final int COL_PIN_STRING = 0xFFB060FF;
+    private static final int COL_PIN_STRING = 0xFF6633CC;
+    private static final int COL_ICON_INNER = 0xFF1A1A1A;
+
+    // ---- Per-frame state ----
+    private final Set<Long> connectedPins = new HashSet<>();
+
+    private record NodeHeader(long nodeId, int color, String title,
+                              float minX, float minY, float maxX) {}
+    private final List<NodeHeader> pendingHeaders = new ArrayList<>();
+
+    private NodeType.PinKind activeDragKind = null;
 
     // =========================================================================
     // Public API
     // =========================================================================
 
-    /**
-     * Renders the node canvas for the given event. Must be called every frame from the GLFW thread.
-     *
-     * @param event   the event being edited (working copy; modified in-place)
-     * @param storage used to persist structural changes (link/node create/delete)
-     */
     public void render(DataStore.Event event, StorageProvider storage) {
         ensureContext();
         NodeEditor.setCurrentEditor(context);
 
-        // Capture the screen position of the top-left corner of the editor widget before entering
-        // the NodeEditor context, so we can compute the visible canvas center for spawn placement.
         ImVec2 editorTopLeft = ImGui.getCursorScreenPos();
-
         NodeEditor.begin("##ne");
 
-        // Update spawn position to the canvas-space coordinates of the visible center.
         ImVec2 editorSize = NodeEditor.getScreenSize();
         ImVec2 center = NodeEditor.screenToCanvas(
                 editorTopLeft.x + editorSize.x * 0.5f,
@@ -107,18 +80,38 @@ public class NodeEditorCanvas {
         spawnX = center.x;
         spawnY = center.y;
 
+        // Pre-compute which pins are connected so icons render filled vs outline.
+        connectedPins.clear();
+        if (event.getConnections() != null) {
+            for (DataStore.Event.Connection c : event.getConnections()) {
+                connectedPins.add(pinId(c.getFromNodeId(), c.getFromPin()));
+                connectedPins.add(pinId(c.getToNodeId(),   c.getToPin()));
+            }
+        }
+
         if (event.getNodes() != null) {
             for (DataStore.Event.Node node : event.getNodes()) {
                 renderNode(event, node);
             }
         }
 
+        // Draw headers after all endNode() calls — node bounds are finalised then.
+        for (NodeHeader h : pendingHeaders) drawHeader(h);
+        pendingHeaders.clear();
+
         if (event.getConnections() != null) {
             for (DataStore.Event.Connection conn : event.getConnections()) {
                 long lid  = linkId(conn);
                 long from = pinId(conn.getFromNodeId(), conn.getFromPin());
                 long to   = pinId(conn.getToNodeId(),   conn.getToPin());
-                NodeEditor.link(lid, from, to);
+                NodeType.PinKind kind = resolvePinKind(event, conn.getFromNodeId(), conn.getFromPin());
+                int col = (kind == NodeType.PinKind.EXEC) ? COL_PIN_EXEC : COL_PIN_STRING;
+                NodeEditor.link(lid, from, to,
+                        ((col)       & 0xFF) / 255f,
+                        ((col >>  8) & 0xFF) / 255f,
+                        ((col >> 16) & 0xFF) / 255f,
+                        ((col >> 24) & 0xFF) / 255f,
+                        2.0f);
             }
         }
 
@@ -131,19 +124,9 @@ public class NodeEditorCanvas {
         }
 
         NodeEditor.end();
-
-        // Sync canvas positions back into the DataStore working copy each frame.
-        // Actual persistence to disk happens when the event editor saves the event.
         syncPositions(event);
     }
 
-    /**
-     * Spawns a new node of the given type at a staggered position near the canvas origin.
-     *
-     * @param event    the event to add the node to
-     * @param storage  used to persist after adding
-     * @param nodeType the {@link NodeType} name (e.g. {@code "SERIAL_TRIGGER"})
-     */
     public void spawnNode(DataStore.Event event, StorageProvider storage, String nodeType) {
         DataStore.Event.Node node = new DataStore.Event.Node();
         node.setId(UUID.randomUUID().toString());
@@ -158,20 +141,11 @@ public class NodeEditorCanvas {
         storage.save();
     }
 
-    /**
-     * Clears the initialized-position set so that stored positions are re-applied to NodeEditor
-     * on the next render, then requests a {@link NodeEditor#navigateToContent()} so the view
-     * is centered on the graph.
-     */
     public void resetView() {
         initializedPositions.clear();
         pendingNavigate = true;
     }
 
-    /**
-     * Destroys the underlying NodeEditor context. Should be called when the owning dialog is
-     * permanently torn down (e.g. application shutdown).
-     */
     public void dispose() {
         if (context != null) {
             NodeEditor.destroyEditor(context);
@@ -189,71 +163,92 @@ public class NodeEditorCanvas {
 
         long nid = nodeId(node.getId());
 
-        // Apply stored position once per session (NodeEditor tracks subsequent drags itself).
         if (!initializedPositions.contains(nid)) {
             NodeEditor.setNodePosition(nid, node.getX(), node.getY());
             initializedPositions.add(nid);
         }
 
-        // Push per-category background and border colors.
-        float[] bg     = categoryBg(nt.getCategory());
-        float[] border = categoryBorder(nt.getCategory());
-        NodeEditor.pushStyleColor(NodeEditorStyleColor.NodeBg,     bg[0],     bg[1],     bg[2],     bg[3]);
-        NodeEditor.pushStyleColor(NodeEditorStyleColor.NodeBorder, border[0], border[1], border[2], border[3]);
+        NodeEditor.pushStyleColor(NodeEditorStyleColor.NodeBg,     0.12f, 0.12f, 0.12f, 0.97f);
+        NodeEditor.pushStyleColor(NodeEditorStyleColor.NodeBorder, 0.28f, 0.28f, 0.28f, 1.00f);
 
         NodeEditor.beginNode(nid);
         ImGui.pushID(node.getId());
 
-        // Title row: colored per category
-        float[] tc = categoryTitleColor(nt.getCategory());
-        ImGui.pushStyleColor(ImGuiCol.Text, tc[0], tc[1], tc[2], tc[3]);
-        ImGui.text(nt.getFriendlyName());
-        ImGui.popStyleColor();
+        // Reserve space for the colored header bar; capture its screen rect for deferred drawing.
+        ImGui.dummy(NODE_MIN_W, HEADER_HEIGHT);
+        float headerMinX = ImGui.getItemRectMin().x;
+        float headerMinY = ImGui.getItemRectMin().y;
+        float headerMaxX = ImGui.getItemRectMax().x;
 
-        // Guarantee a minimum node width so output pins have room to right-align.
-        if (ImGui.getItemRectSize().x < NODE_MIN_W) {
-            ImGui.sameLine();
-            ImGui.dummy(NODE_MIN_W - ImGui.getItemRectSize().x, 1f);
-        }
-        ImGui.separator();
+        ImGui.dummy(0f, 4f); // gap between header and first pin row
 
-        // Input pins (left side: circle + label / text field)
+        // Input pins — stacked vertically on the left side.
         for (NodeType.PinDef pin : nt.inputPins()) {
             renderInputPin(event, node, pin);
         }
 
-        // Output pins (right side: label + circle)
+        // Output pins — stacked vertically on the right side.
         for (NodeType.PinDef pin : nt.outputPins()) {
             renderOutputPin(node, pin);
         }
 
+        ImGui.dummy(0f, 4f); // bottom padding
+
         ImGui.popID();
         NodeEditor.endNode();
+
+        pendingHeaders.add(new NodeHeader(nid, categoryHeaderColor(nt.getCategory()),
+                nt.getFriendlyName(), headerMinX, headerMinY, headerMaxX));
+
         NodeEditor.popStyleColor(2);
     }
+
+    /**
+     * Draws the colored header bar using the node's background draw list.
+     * Screen coordinates were captured during {@link #renderNode} before {@code endNode()}.
+     */
+    private void drawHeader(NodeHeader h) {
+        ImDrawList dl = NodeEditor.getNodeBackgroundDrawList(h.nodeId());
+        float x1 = h.minX(), y1 = h.minY(), x2 = h.maxX(), y2 = y1 + HEADER_HEIGHT;
+
+        // Rounded on top two corners only (ImDrawFlags_RoundCornersTop = 0x30).
+        dl.addRectFilled(x1, y1, x2, y2, h.color(), 5f, 0x30);
+        // Subtle separator line at header bottom.
+        dl.addLine(x1, y2, x2, y2, rgba(255, 255, 255, 35), 1f);
+        // Title text centred vertically in the header band.
+        float textH = ImGui.getTextLineHeight();
+        dl.addText(x1 + 8f, y1 + (HEADER_HEIGHT - textH) * 0.5f, 0xFFFFFFFF, h.title());
+    }
+
+    // =========================================================================
+    // Pin rendering — stacked layout (inputs left, outputs right)
+    // =========================================================================
 
     private void renderInputPin(DataStore.Event event, DataStore.Event.Node node, NodeType.PinDef pin) {
         long    pid       = pinId(node.getId(), pin.id());
         boolean isExec    = pin.kind() == NodeType.PinKind.EXEC;
-        boolean connected = !isExec && isConnectedInput(event, node.getId(), pin.id());
+        boolean connected = connectedPins.contains(pid);
+        float   alpha     = (activeDragKind != null && activeDragKind != pin.kind()) ? 48f / 255f : 1f;
+        int     color     = withAlpha(isExec ? COL_PIN_EXEC : COL_PIN_STRING, alpha);
 
-        // NodeEditorPinKind.Output = 1 = C++ Input (LEFT side); binding names are swapped vs C++
+        // NodeEditorPinKind.Output = 1 = C++ Input (LEFT side).
         NodeEditor.beginPin(pid, NodeEditorPinKind.Output);
         ImVec2 cp = ImGui.getCursorScreenPos();
-        ImGui.dummy(PIN_SIZE, PIN_SIZE);
-        ImGui.getWindowDrawList().addCircleFilled(
-                cp.x + PIN_SIZE * 0.5f, cp.y + PIN_SIZE * 0.5f, PIN_RADIUS,
-                isExec ? COL_PIN_EXEC : COL_PIN_STRING);
+        NodeEditor.pinPivotRect(cp.x, cp.y, cp.x + ICON_SIZE, cp.y + ICON_SIZE);
+        ImGui.dummy(ICON_SIZE, ICON_SIZE);
+        drawPinIcon(ImGui.getWindowDrawList(), cp.x + ICON_SIZE * 0.5f, cp.y + ICON_SIZE * 0.5f,
+                isExec, connected, color);
         NodeEditor.endPin();
 
         if (!isExec) {
-            ImGui.sameLine();
+            ImGui.sameLine(0, 6f);
             if (connected) {
+                ImGui.setCursorPosY(ImGui.getCursorPosY() + (ICON_SIZE - ImGui.getTextLineHeight()) * 0.5f);
                 ImGui.text(friendlyPinName(pin.id()));
             } else {
-                // Inline label + text field for unconnected data pins
+                ImGui.setCursorPosY(ImGui.getCursorPosY() + (ICON_SIZE - ImGui.getFrameHeight()) * 0.5f);
                 ImGui.text(friendlyPinName(pin.id()) + ":");
-                ImGui.sameLine();
+                ImGui.sameLine(0, 4f);
                 String cur = node.getParams() != null
                         ? node.getParams().getOrDefault(pin.id(), "") : "";
                 ImString val = new ImString(cur, 256);
@@ -267,34 +262,77 @@ public class NodeEditorCanvas {
     }
 
     private void renderOutputPin(DataStore.Event.Node node, NodeType.PinDef pin) {
-        long    pid    = pinId(node.getId(), pin.id());
-        boolean isExec = pin.kind() == NodeType.PinKind.EXEC;
-        int     color  = isExec ? COL_PIN_EXEC : COL_PIN_STRING;
+        long    pid       = pinId(node.getId(), pin.id());
+        boolean isExec    = pin.kind() == NodeType.PinKind.EXEC;
+        boolean connected = connectedPins.contains(pid);
+        float   alpha     = (activeDragKind != null && activeDragKind != pin.kind()) ? 48f / 255f : 1f;
+        int     color     = withAlpha(isExec ? COL_PIN_EXEC : COL_PIN_STRING, alpha);
 
-        // Push the circle to the right edge using a leading dummy spacer.
-        // Total row = spacer + [label + gap] + circle = NODE_MIN_W.
-        // Using a dummy spacer is reliable inside NodeEditor's inner windows
-        // where setCursorPosX can behave unexpectedly.
+        // Push the icon to the right edge using a leading spacer dummy.
         if (!isExec) {
-            String label   = friendlyPinName(pin.id());
-            float  labelW  = ImGui.calcTextSize(label).x;
-            float  spacerW = Math.max(1f, NODE_MIN_W - labelW - PIN_SIZE - 4f);
-            ImGui.dummy(spacerW, PIN_SIZE);
+            String label  = friendlyPinName(pin.id());
+            float  labelW = ImGui.calcTextSize(label).x;
+            float  spacer = Math.max(1f, NODE_MIN_W - labelW - ICON_SIZE - 6f);
+            ImGui.dummy(spacer, ICON_SIZE);
             ImGui.sameLine(0, 0);
+            ImGui.setCursorPosY(ImGui.getCursorPosY() + (ICON_SIZE - ImGui.getTextLineHeight()) * 0.5f);
             ImGui.text(label);
-            ImGui.sameLine(0, 4f);
+            ImGui.sameLine(0, 6f);
+            ImGui.setCursorPosY(ImGui.getCursorPosY() - (ICON_SIZE - ImGui.getTextLineHeight()) * 0.5f);
         } else {
-            ImGui.dummy(Math.max(1f, NODE_MIN_W - PIN_SIZE), PIN_SIZE);
+            ImGui.dummy(Math.max(1f, NODE_MIN_W - ICON_SIZE), ICON_SIZE);
             ImGui.sameLine(0, 0);
         }
 
-        // NodeEditorPinKind.Input = 0 = C++ Output (RIGHT side); binding names are swapped vs C++
+        // NodeEditorPinKind.Input = 0 = C++ Output (RIGHT side).
         NodeEditor.beginPin(pid, NodeEditorPinKind.Input);
         ImVec2 cp = ImGui.getCursorScreenPos();
-        ImGui.dummy(PIN_SIZE, PIN_SIZE);
-        ImGui.getWindowDrawList().addCircleFilled(
-                cp.x + PIN_SIZE * 0.5f, cp.y + PIN_SIZE * 0.5f, PIN_RADIUS, color);
+        NodeEditor.pinPivotRect(cp.x, cp.y, cp.x + ICON_SIZE, cp.y + ICON_SIZE);
+        ImGui.dummy(ICON_SIZE, ICON_SIZE);
+        drawPinIcon(ImGui.getWindowDrawList(), cp.x + ICON_SIZE * 0.5f, cp.y + ICON_SIZE * 0.5f,
+                isExec, connected, color);
         NodeEditor.endPin();
+    }
+
+    // =========================================================================
+    // Pin icon drawing
+    // =========================================================================
+
+    private void drawPinIcon(ImDrawList dl, float cx, float cy,
+                              boolean isExec, boolean filled, int color) {
+        if (isExec) drawFlowIcon(dl, cx, cy, filled, color);
+        else        drawCircleIcon(dl, cx, cy, filled, color);
+    }
+
+    private void drawCircleIcon(ImDrawList dl, float cx, float cy, boolean filled, int color) {
+        if (filled) {
+            dl.addCircleFilled(cx, cy, ICON_RADIUS, color, 12);
+        } else {
+            dl.addCircleFilled(cx, cy, ICON_RADIUS, COL_ICON_INNER, 12);
+            dl.addCircle(cx, cy, ICON_RADIUS, color, 12, 1.5f);
+        }
+    }
+
+    private void drawFlowIcon(ImDrawList dl, float cx, float cy, boolean filled, int color) {
+        float s = ICON_RADIUS;
+        float[][] pts = {
+            {cx - s * 0.5f, cy - s},
+            {cx + s * 0.5f, cy - s},
+            {cx + s,        cy    },
+            {cx + s * 0.5f, cy + s},
+            {cx - s * 0.5f, cy + s},
+            {cx,            cy    },
+        };
+        dl.pathClear();
+        for (float[] p : pts) dl.pathLineTo(p[0], p[1]);
+        if (filled) {
+            dl.pathFillConvex(color);
+        } else {
+            dl.pathFillConvex(COL_ICON_INNER);
+            dl.pathClear();
+            for (float[] p : pts) dl.pathLineTo(p[0], p[1]);
+            dl.pathStroke(color, 1 /* ImDrawFlags_Closed */, 1.5f);
+        }
     }
 
     // =========================================================================
@@ -302,25 +340,35 @@ public class NodeEditorCanvas {
     // =========================================================================
 
     private void handleCreate(DataStore.Event event, StorageProvider storage) {
+        activeDragKind = null;
+
         if (!NodeEditor.beginCreate()) return;
 
         ImLong startPin = new ImLong();
         ImLong endPin   = new ImLong();
         if (NodeEditor.queryNewLink(startPin, endPin)) {
+            String[] dragInfo = pinLookup.get(startPin.get());
+            if (dragInfo == null) dragInfo = pinLookup.get(endPin.get());
+            if (dragInfo != null) {
+                activeDragKind = resolvePinKind(event, dragInfo[0], dragInfo[1]);
+            }
+
             String[][] fromTo = resolveFromTo(event, startPin.get(), endPin.get());
             if (fromTo != null && pinKindMatch(event, fromTo[0], fromTo[1])) {
-                if (NodeEditor.acceptNewItem()) {
-                    // Remove any existing wire into the target input pin first.
+                int col = (activeDragKind == NodeType.PinKind.EXEC) ? COL_PIN_EXEC : COL_PIN_STRING;
+                if (NodeEditor.acceptNewItem(
+                        ((col) & 0xFF) / 255f, ((col >> 8) & 0xFF) / 255f,
+                        ((col >> 16) & 0xFF) / 255f, 1f, 2f)) {
                     event.getConnections().removeIf(c ->
                             c.getToNodeId().equals(fromTo[1][0]) && c.getToPin().equals(fromTo[1][1]));
                     DataStore.Event.Connection conn = new DataStore.Event.Connection(
                             fromTo[0][0], fromTo[0][1], fromTo[1][0], fromTo[1][1]);
                     event.getConnections().add(conn);
-                    linkId(conn); // register the new link ID in our map
+                    linkId(conn);
                     storage.save();
                 }
             } else {
-                NodeEditor.rejectNewItem();
+                NodeEditor.rejectNewItem(1f, 0.2f, 0.2f, 1f);
             }
         }
 
@@ -370,10 +418,6 @@ public class NodeEditorCanvas {
     // Position sync
     // =========================================================================
 
-    /**
-     * Copies the current NodeEditor canvas positions back into the DataStore working copy.
-     * Called every frame so that positions are captured when the event is explicitly saved.
-     */
     private void syncPositions(DataStore.Event event) {
         if (event.getNodes() == null) return;
         for (DataStore.Event.Node node : event.getNodes()) {
@@ -391,22 +435,14 @@ public class NodeEditorCanvas {
     private long nodeId(String uuid) {
         String key = "n:" + uuid;
         Long   id  = idMap.get(key);
-        if (id == null) {
-            id = nextId++;
-            idMap.put(key, id);
-            nodeLookup.put(id, uuid);
-        }
+        if (id == null) { id = nextId++; idMap.put(key, id); nodeLookup.put(id, uuid); }
         return id;
     }
 
     private long pinId(String nodeUuid, String pinName) {
         String key = "p:" + nodeUuid + ":" + pinName;
         Long   id  = idMap.get(key);
-        if (id == null) {
-            id = nextId++;
-            idMap.put(key, id);
-            pinLookup.put(id, new String[]{nodeUuid, pinName});
-        }
+        if (id == null) { id = nextId++; idMap.put(key, id); pinLookup.put(id, new String[]{nodeUuid, pinName}); }
         return id;
     }
 
@@ -415,8 +451,7 @@ public class NodeEditorCanvas {
                        + ":" + conn.getToNodeId() + ":" + conn.getToPin();
         Long id = idMap.get(key);
         if (id == null) {
-            id = nextId++;
-            idMap.put(key, id);
+            id = nextId++; idMap.put(key, id);
             linkLookup.put(id, conn.getFromNodeId() + ":" + conn.getFromPin()
                               + ":" + conn.getToNodeId() + ":" + conn.getToPin());
         }
@@ -427,13 +462,6 @@ public class NodeEditorCanvas {
     // Graph helpers
     // =========================================================================
 
-    /**
-     * Given two pin IDs returned by {@link NodeEditor#queryNewLink}, identifies which is
-     * the output (from) pin and which is the input (to) pin.
-     *
-     * @return {@code String[][]{from, to}} where each element is {@code [nodeUuid, pinId]},
-     *         or {@code null} if both pins are the same kind or belong to the same node.
-     */
     private String[][] resolveFromTo(DataStore.Event event, long pinA, long pinB) {
         String[] a = pinLookup.get(pinA);
         String[] b = pinLookup.get(pinB);
@@ -442,7 +470,7 @@ public class NodeEditorCanvas {
         boolean bIsOut = isOutputPin(event, b[0], b[1]);
         if (aIsOut && !bIsOut) return new String[][]{a, b};
         if (!aIsOut && bIsOut) return new String[][]{b, a};
-        return null; // both inputs or both outputs — reject
+        return null;
     }
 
     private boolean isOutputPin(DataStore.Event event, String nodeUuid, String pinId) {
@@ -453,13 +481,6 @@ public class NodeEditorCanvas {
         return nt.outputPins().stream().anyMatch(p -> p.id().equals(pinId));
     }
 
-    /**
-     * Returns {@code true} if the output pin and input pin carry the same data kind
-     * (EXEC↔EXEC or STRING↔STRING).
-     *
-     * @param from {@code [nodeUuid, pinId]} for the output side
-     * @param to   {@code [nodeUuid, pinId]} for the input side
-     */
     private boolean pinKindMatch(DataStore.Event event, String[] from, String[] to) {
         DataStore.Event.Node fn = findNode(event, from[0]);
         DataStore.Event.Node tn = findNode(event, to[0]);
@@ -474,24 +495,27 @@ public class NodeEditorCanvas {
         return fromKind != null && toKind != null && fromKind == toKind;
     }
 
-    private boolean isConnectedInput(DataStore.Event event, String nodeId, String pinId) {
-        if (event.getConnections() == null) return false;
-        return event.getConnections().stream()
-                .anyMatch(c -> c.getToNodeId().equals(nodeId) && c.getToPin().equals(pinId));
+    private NodeType.PinKind resolvePinKind(DataStore.Event event, String nodeUuid, String pinId) {
+        DataStore.Event.Node node = findNode(event, nodeUuid);
+        if (node == null) return null;
+        NodeType nt = NodeType.getByName(node.getType());
+        if (nt == null) return null;
+        return nt.outputPins().stream()
+                .filter(p -> p.id().equals(pinId)).map(NodeType.PinDef::kind).findFirst()
+                .orElseGet(() -> nt.inputPins().stream()
+                        .filter(p -> p.id().equals(pinId)).map(NodeType.PinDef::kind)
+                        .findFirst().orElse(null));
     }
 
     private DataStore.Event.Node findNode(DataStore.Event event, String nodeId) {
         if (event.getNodes() == null) return null;
-        return event.getNodes().stream()
-                .filter(n -> n.getId().equals(nodeId))
-                .findFirst().orElse(null);
+        return event.getNodes().stream().filter(n -> n.getId().equals(nodeId)).findFirst().orElse(null);
     }
 
     // =========================================================================
     // Style helpers
     // =========================================================================
 
-    /** Converts a raw pin ID to a user-friendly label. Strips {@code data_} prefix and capitalizes. */
     private static String friendlyPinName(String pinId) {
         String s = pinId.startsWith("data_") ? pinId.substring(5) : pinId;
         s = s.replace('_', ' ');
@@ -499,39 +523,25 @@ public class NodeEditorCanvas {
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
-    /** Node background color (RGBA, 0–1) for each category — a dark tint. */
-    private static float[] categoryBg(NodeType.Category cat) {
+    private static int categoryHeaderColor(NodeType.Category cat) {
         return switch (cat) {
-            case TRIGGER   -> new float[]{0.12f, 0.09f, 0.22f, 1.0f};
-            case CONDITION -> new float[]{0.09f, 0.18f, 0.09f, 1.0f};
-            case ACTION    -> new float[]{0.22f, 0.13f, 0.06f, 1.0f};
-            case VALUE     -> new float[]{0.06f, 0.18f, 0.22f, 1.0f};
+            case TRIGGER   -> rgba(55,  35, 130, 255);
+            case CONDITION -> rgba(25,  95,  25, 255);
+            case ACTION    -> rgba(130, 55,  10, 255);
+            case VALUE     -> rgba(10,  85, 120, 255);
         };
     }
 
-    /** Node border color (RGBA, 0–1) for each category — a lighter accent. */
-    private static float[] categoryBorder(NodeType.Category cat) {
-        return switch (cat) {
-            case TRIGGER   -> new float[]{0.38f, 0.27f, 0.91f, 0.9f};
-            case CONDITION -> new float[]{0.29f, 0.87f, 0.29f, 0.9f};
-            case ACTION    -> new float[]{0.94f, 0.65f, 0.38f, 0.9f};
-            case VALUE     -> new float[]{0.08f, 0.80f, 0.98f, 0.9f};
-        };
+    private static int rgba(int r, int g, int b, int a) {
+        return (a << 24) | (b << 16) | (g << 8) | r;
     }
 
-    /** Title text color (RGBA, 0–1) for each category. */
-    private static float[] categoryTitleColor(NodeType.Category cat) {
-        return switch (cat) {
-            case TRIGGER   -> new float[]{0.65f, 0.53f, 1.00f, 1.0f};
-            case CONDITION -> new float[]{0.50f, 1.00f, 0.50f, 1.0f};
-            case ACTION    -> new float[]{1.00f, 0.75f, 0.40f, 1.0f};
-            case VALUE     -> new float[]{0.30f, 0.90f, 1.00f, 1.0f};
-        };
+    private static int withAlpha(int abgr, float fraction) {
+        int a = Math.round(((abgr >>> 24) & 0xFF) * fraction);
+        return (abgr & 0x00FFFFFF) | (a << 24);
     }
 
     private void ensureContext() {
-        if (context == null) {
-            context = NodeEditor.createEditor();
-        }
+        if (context == null) context = NodeEditor.createEditor();
     }
 }

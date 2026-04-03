@@ -151,6 +151,7 @@ public class EventEditorDialog extends BaseDialog {
         ImGui.beginChild("##canvasArea", canvasW, totalH - 40f, false);
 
         // Header strip: event name field + Save + Cancel
+        ImGui.spacing();
         ImGui.setNextItemWidth(canvasW - 160f);
         ImGui.inputText("##evtname", fieldName);
         ImGui.sameLine();
@@ -162,8 +163,6 @@ public class EventEditorDialog extends BaseDialog {
         if (ImGui.button("Cancel")) {
             ImGui.closeCurrentPopup();
         }
-
-        ImGui.separator();
 
         // Node editor canvas
         canvas.render(editingEvent, storage);
